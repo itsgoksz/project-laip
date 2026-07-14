@@ -750,7 +750,7 @@ export const SceneViewer = () => {
   return (
     <div className="flex-1 relative w-full h-full bg-[#0a0910]">
       {/* Overlay UI */}
-      <div className="absolute top-4 left-4 z-10 flex gap-2 pointer-events-none">
+      <div className="absolute top-16 left-4 z-10 flex gap-2 pointer-events-none">
         <div className="bg-black/50 border border-white/10 text-xs px-3 py-1.5 rounded text-gray-300 backdrop-blur-md">
           View: <span className="text-white">Realistic Environment</span>
         </div>

@@ -18,8 +18,10 @@ const DroneMapBase = () => (
 );
 
 const buildingMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.1 });
+buildingMaterial.userData = { uIsNight: { value: 0 } };
 // Procedural Building Shader for windows, floors, and roofs (zero performance cost)
 buildingMaterial.onBeforeCompile = (shader) => {
+  shader.uniforms.uIsNight = buildingMaterial.userData.uIsNight;
   shader.vertexShader = shader.vertexShader.replace(
     '#include <common>',
     `#include <common>\n attribute float isApartment;\n varying vec3 vWorldPosition;\n varying vec3 vWorldNormal;\n varying float vIsApartment;`
@@ -30,12 +32,12 @@ buildingMaterial.onBeforeCompile = (shader) => {
   );
   shader.fragmentShader = shader.fragmentShader.replace(
     '#include <common>',
-    `#include <common>\n varying vec3 vWorldPosition;\n varying vec3 vWorldNormal;\n varying float vIsApartment;`
+    `#include <common>\n varying vec3 vWorldPosition;\n varying vec3 vWorldNormal;\n varying float vIsApartment;\n uniform float uIsNight;`
   );
   shader.fragmentShader = shader.fragmentShader.replace(
     '#include <color_fragment>',
     `#include <color_fragment>\n 
-     bool isRoof = vWorldNormal.y > 0.5;
+      bool isRoof = vWorldNormal.y > 0.5;
      if (isRoof) {
        // Roofs get a slightly darker, warmer terracotta/grey tint
        diffuseColor.rgb *= vec3(0.9, 0.85, 0.8);
@@ -50,10 +52,19 @@ buildingMaterial.onBeforeCompile = (shader) => {
        if (wy > 0.3 && wy < 0.7 && w > 0.3 && w < 0.7) {
          // Randomly toggle windows "on" and "off"
          float randomLight = fract(sin(dot(floor(vWorldPosition.xyz / 4.0), vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-         if (randomLight > 0.6) {
-           diffuseColor.rgb = vec3(0.9, 0.9, 0.7); // Warm lit window
+         
+         if (uIsNight > 0.5) {
+             if (randomLight > 0.95) {
+                diffuseColor.rgb = vec3(1.0, 0.8, 0.4); 
+             } else {
+                diffuseColor.rgb *= 0.1;
+             }
          } else {
-           diffuseColor.rgb *= 0.2; // Dark unlit glass
+             if (randomLight > 0.6) {
+               diffuseColor.rgb = vec3(0.9, 0.9, 0.7); 
+             } else {
+               diffuseColor.rgb *= 0.2; 
+             }
          }
        }
        
@@ -70,6 +81,24 @@ buildingMaterial.onBeforeCompile = (shader) => {
        // Ambient occlusion gradient (darker near ground)
        float groundAO = clamp(vWorldPosition.y / 20.0, 0.4, 1.0);
        diffuseColor.rgb *= groundAO;
+     }
+    `
+  );
+  
+  shader.fragmentShader = shader.fragmentShader.replace(
+    '#include <emissivemap_fragment>',
+    `#include <emissivemap_fragment>\n
+     if (!isRoof && uIsNight > 0.5) {
+       float wx = fract(vWorldPosition.x / 4.0);
+       float wz = fract(vWorldPosition.z / 4.0);
+       float wy = fract(vWorldPosition.y / 4.0);
+       float w = abs(vWorldNormal.x) > 0.5 ? wz : wx;
+       if (wy > 0.3 && wy < 0.7 && w > 0.3 && w < 0.7) {
+         float randomLight = fract(sin(dot(floor(vWorldPosition.xyz / 4.0), vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+         if (randomLight > 0.95) {
+            totalEmissiveRadiance += vec3(1.0, 0.7, 0.2) * 5.0; 
+         }
+       }
      }
     `
   );
@@ -305,23 +334,111 @@ const MergedCityMap = ({ buildings, roads }: { buildings: any[], roads: any[] })
 
 // --- Base Environment Layers ---
 
-const EVStationsLayer = ({ stations, onSelect }: { stations: any[], onSelect: (s: any) => void }) => {
-  if (!stations || stations.length === 0) return null;
+const CameraController = ({ targetPos, onArrived }: { targetPos: THREE.Vector3 | null, onArrived: () => void }) => {
+  const targetLookAt = useRef(new THREE.Vector3());
+  const targetCameraPos = useRef(new THREE.Vector3());
+  const isAnimating = useRef(false);
+
+  useEffect(() => {
+    if (targetPos) {
+      targetLookAt.current.copy(targetPos);
+      targetCameraPos.current.set(targetPos.x, 200, targetPos.z + 300); 
+      isAnimating.current = true;
+    }
+  }, [targetPos]);
+
+  useFrame((state, delta) => {
+    if (isAnimating.current && targetPos) {
+      state.camera.position.lerp(targetCameraPos.current, 4 * delta);
+      if (state.controls) {
+        (state.controls as any).target.lerp(targetLookAt.current, 4 * delta);
+        (state.controls as any).update();
+      }
+      
+      if (state.camera.position.distanceTo(targetCameraPos.current) < 5) {
+        isAnimating.current = false;
+        onArrived();
+      }
+    }
+  });
+  return null;
+};
+
+const getCategoryColor = (cat: string) => {
+  if (cat === "mall" || cat === "commercial") return { text: "text-cyan-400", bg: "bg-cyan-500/20", border: "border-cyan-500/30", shadow: "shadow-[0_0_5px_rgba(34,211,238,0.8)]", hex: "#22d3ee", hexShadow: "drop-shadow(0 0 5px #22d3ee)" };
+  if (cat === "hospital") return { text: "text-red-500", bg: "bg-red-500/20", border: "border-red-500/30", shadow: "shadow-[0_0_5px_rgba(239,68,68,0.8)]", hex: "#ef4444", hexShadow: "drop-shadow(0 0 5px #ef4444)" };
+  if (cat === "restaurant" || cat === "cafe" || cat === "fast_food") return { text: "text-rose-400", bg: "bg-rose-500/20", border: "border-rose-500/30", shadow: "shadow-[0_0_5px_rgba(251,113,133,0.8)]", hex: "#fb7185", hexShadow: "drop-shadow(0 0 5px #fb7185)" };
+  if (cat === "apartments" || cat === "residential") return { text: "text-indigo-400", bg: "bg-indigo-500/20", border: "border-indigo-500/30", shadow: "shadow-[0_0_5px_rgba(129,140,248,0.8)]", hex: "#818cf8", hexShadow: "drop-shadow(0 0 5px #818cf8)" };
+  // default / ev_station
+  return { text: "text-green-400", bg: "bg-green-500/20", border: "border-green-500/30", shadow: "shadow-[0_0_5px_rgba(34,197,94,0.8)]", hex: "#4ade80", hexShadow: "drop-shadow(0 0 5px #4ade80)" };
+};
+
+const LandmarkMarker = ({ st, onFlyTo, onExpand }: { st: any, onFlyTo: (st: any) => void, onExpand: (st: any) => void }) => {
+  const { camera } = useThree();
+  const colorObj = getCategoryColor(st.category);
+  
+  const handleClick = (e: any) => {
+    e.stopPropagation();
+    const stPos = new THREE.Vector3(st.center[0], 0, st.center[1]);
+    const targetCamPos = new THREE.Vector3(stPos.x, 200, stPos.z + 300);
+    const dist = camera.position.distanceTo(targetCamPos);
+    
+    if (dist > 80) {
+      onFlyTo(st);
+    } else {
+      onExpand(st);
+    }
+  };
+
+  return (
+    <Html position={[0, 45, 0]} center zIndexRange={[100, 0]}>
+      <div className="flex flex-col items-center">
+        <div 
+          onClick={handleClick}
+          className="bg-black/30 backdrop-blur-sm border border-white/20 p-1 px-2 rounded cursor-pointer pointer-events-auto hover:bg-black/50 transition-all text-white min-w-[70px] text-center shadow-xl group"
+          title={st.name}
+        >
+          <div className="flex items-center justify-center gap-1 mb-0.5">
+             <Building2 size={8} className={`${colorObj.text} drop-shadow-[0_0_5px_rgba(0,0,0,0.5)]`} />
+             <div className="text-[10px] font-bold whitespace-nowrap">{st.name}</div>
+          </div>
+          <div className={`text-[7px] ${colorObj.text} uppercase tracking-widest font-semibold`}>{st.category.replace('_', ' ')}</div>
+        </div>
+        <div className="w-[2px] h-20 mt-0.5" style={{ background: `linear-gradient(to bottom, ${colorObj.hex}cc, transparent)`, filter: colorObj.hexShadow }}></div>
+      </div>
+    </Html>
+  );
+};
+
+const EVStationsLayer = ({ stations, onFlyTo, onExpand, focusedLandmark, assetFilters }: { stations: any[], onFlyTo: (st: any) => void, onExpand: (st: any) => void, focusedLandmark: any, assetFilters?: any }) => {
+  const visibleStations = useMemo(() => {
+    if (!assetFilters || assetFilters.all || assetFilters.evStations) return stations;
+    return [];
+  }, [stations, assetFilters]);
+
+  if (!visibleStations || visibleStations.length === 0) return null;
   
   return (
     <group>
-      {stations.map(st => {
+      {visibleStations.map(st => {
         const numChargers = Math.max(1, st.connections.length);
         const spacing = 3;
         const startX = -((numChargers - 1) * spacing) / 2;
+        const isFocused = focusedLandmark?.id === st.id;
         
         return (
           <group key={st.id} position={[st.center[0], 0, st.center[1]]}>
             {/* Holographic Glowing Pillar for visibility from afar */}
-            <mesh position={[0, 20, 0]}>
-              <cylinderGeometry args={[0.5, 0.5, 40, 8]} />
-              <meshStandardMaterial color="#22c55e" emissive="#22c55e" emissiveIntensity={2} transparent opacity={0.3} blending={THREE.AdditiveBlending} depthWrite={false} />
+            <mesh position={[0, isFocused ? 30 : 20, 0]}>
+              <cylinderGeometry args={[isFocused ? 1.5 : 0.5, isFocused ? 1.5 : 0.5, isFocused ? 60 : 40, 8]} />
+              <meshStandardMaterial color="#22c55e" emissive="#22c55e" emissiveIntensity={isFocused ? 5 : 2} transparent opacity={isFocused ? 0.6 : 0.3} blending={THREE.AdditiveBlending} depthWrite={false} />
             </mesh>
+            {isFocused && (
+              <mesh position={[0, 15, 0]}>
+                <boxGeometry args={[40, 50, 40]} />
+                <meshStandardMaterial color="#22c55e" emissive="#22c55e" emissiveIntensity={2} wireframe transparent opacity={0.6} />
+              </mesh>
+            )}
             
             {/* Mathematically exact number of charging pedestals based on API data */}
             {Array.from({ length: numChargers }).map((_, i) => (
@@ -357,16 +474,8 @@ const EVStationsLayer = ({ stations, onSelect }: { stations: any[], onSelect: (s
               </group>
             ))}
 
-            {/* Interactive Floating Dot */}
-            <Html position={[0, 32, 0]} center zIndexRange={[100, 0]}>
-              <div 
-                onClick={(e) => { e.stopPropagation(); onSelect(st); }}
-                className="w-4 h-4 bg-green-500 rounded-full cursor-pointer hover:scale-150 transition-transform animate-pulse border-2 border-white shadow-[0_0_20px_#22c55e]"
-                title={st.name}
-              >
-                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 text-[10px] font-bold text-green-400 bg-black/60 px-1 rounded whitespace-nowrap pointer-events-none">EV</div>
-              </div>
-            </Html>
+            {/* Interactive Floating Box */}
+            <LandmarkMarker st={st} onFlyTo={onFlyTo} onExpand={onExpand} />
           </group>
         );
       })}
@@ -449,26 +558,36 @@ const LakesLayer = ({ lakes }: { lakes: any[] }) => {
   );
 };
 
-const getCategoryColor = (cat: string) => {
-  if (cat === "mall" || cat === "commercial") return "bg-cyan-400 shadow-[0_0_15px_#22d3ee]";
-  if (cat === "hospital") return "bg-red-500 shadow-[0_0_15px_#ef4444]";
-  if (cat === "restaurant" || cat === "cafe" || cat === "fast_food") return "bg-rose-400 shadow-[0_0_15px_#fb7185]";
-  return "bg-indigo-400 shadow-[0_0_15px_#818cf8]"; // apartments
-};
-
-const LandmarksLayer = ({ buildings, onSelect }: { buildings: any[], onSelect: (b: any) => void }) => {
-  const landmarks = useMemo(() => buildings.filter(b => b.name && (b.category === "mall" || b.category === "hospital" || b.category === "apartments" || b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food")), [buildings]);
+const LandmarksLayer = ({ buildings, onFlyTo, onExpand, focusedLandmark, assetFilters }: { buildings: any[], onFlyTo: (b: any) => void, onExpand: (b: any) => void, focusedLandmark: any, assetFilters?: any }) => {
+  const landmarks = useMemo(() => buildings.filter(b => {
+    if (!b.name) return false;
+    
+    const isKnown = (b.category === "mall" || b.category === "hospital" || b.category === "apartments" || b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food");
+    if (!assetFilters || assetFilters.all) return isKnown;
+    
+    if (assetFilters.apartments && (b.category === "apartments" || b.category === "residential")) return true;
+    if (assetFilters.hospital && b.category === "hospital") return true;
+    if (assetFilters.restaurants && (b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food")) return true;
+    
+    return false;
+  }), [buildings, assetFilters]);
   return (
     <group>
-      {landmarks.map(b => (
-        <Html key={b.id} position={[b.center[0], b.height + 5, b.center[1]]} center distanceFactor={800} zIndexRange={[100, 0]}>
-          <div 
-            onClick={(e) => { e.stopPropagation(); onSelect(b); }}
-            className={`w-3 h-3 ${getCategoryColor(b.category)} rounded-full cursor-pointer hover:scale-150 transition-transform animate-pulse border border-white/50`}
-            title={b.name}
-          ></div>
-        </Html>
-      ))}
+      {landmarks.map(b => {
+        const isFocused = focusedLandmark?.id === b.id;
+        const colorObj = getCategoryColor(b.category);
+        return (
+          <group key={b.id} position={[b.center[0], 0, b.center[1]]}>
+            {isFocused && (
+              <mesh position={[0, b.height / 2, 0]}>
+                <boxGeometry args={[40, b.height + 10, 40]} />
+                <meshStandardMaterial color={colorObj.hex} emissive={colorObj.hex} emissiveIntensity={2} wireframe transparent opacity={0.6} />
+              </mesh>
+            )}
+            <LandmarkMarker st={b} onFlyTo={onFlyTo} onExpand={onExpand} />
+          </group>
+        );
+      })}
     </group>
   );
 };
@@ -587,9 +706,10 @@ const DenseForest = ({ lakes }: { lakes?: any[] }) => {
   );
 };
 
-const StreetlightsLayer = ({ roads }: { roads: any[] }) => {
+const StreetlightsLayer = ({ roads, isNight }: { roads: any[], isNight: boolean }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const poleRef = useRef<THREE.InstancedMesh>(null);
+  const glowRef = useRef<THREE.InstancedMesh>(null);
   
   const points = useMemo(() => {
     const arr: THREE.Vector3[] = [];
@@ -604,7 +724,7 @@ const StreetlightsLayer = ({ roads }: { roads: any[] }) => {
       // Light every 25 meters for major, 60 meters for minor
       const spacing = isMajor ? 25 : 60;
       const count = Math.floor(path.getLength() / spacing); 
-      if (count === 0) return; // Fix division by zero for short roads
+      if (count === 0) return;
       for(let i = 0; i <= count; i++) {
         const t = count === 0 ? 0 : (i / count);
         const pt = path.getPointAt(t);
@@ -627,23 +747,37 @@ const StreetlightsLayer = ({ roads }: { roads: any[] }) => {
         dummy.position.y = 5; // Bulb height
         dummy.updateMatrix();
         meshRef.current!.setMatrixAt(i, dummy.matrix);
-        
+        if (glowRef.current) {
+          dummy.position.y = 5;
+          dummy.scale.setScalar(isNight ? 1 : 0.001); // hide glow during day
+          dummy.updateMatrix();
+          glowRef.current!.setMatrixAt(i, dummy.matrix);
+          dummy.scale.setScalar(1);
+        }
         dummy.position.y = 2.5; // Pole center
         dummy.updateMatrix();
         poleRef.current!.setMatrixAt(i, dummy.matrix);
       });
       meshRef.current.instanceMatrix.needsUpdate = true;
       poleRef.current.instanceMatrix.needsUpdate = true;
+      if (glowRef.current) glowRef.current.instanceMatrix.needsUpdate = true;
     }
-  }, [points]);
+  }, [points, isNight]);
 
   if (points.length === 0) return null;
   return (
     <group>
+      {/* Bulb */}
       <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, points.length]}>
         <sphereGeometry args={[0.7, 8, 8]} />
-        <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={10} toneMapped={false} />
+        <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={isNight ? 20 : 3} toneMapped={false} />
       </instancedMesh>
+      {/* Glow halo at night */}
+      <instancedMesh ref={glowRef} args={[undefined as any, undefined as any, points.length]}>
+        <sphereGeometry args={[4, 8, 8]} />
+        <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={2} transparent opacity={0.12} depthWrite={false} blending={THREE.AdditiveBlending} />
+      </instancedMesh>
+      {/* Pole */}
       <instancedMesh ref={poleRef} args={[undefined as any, undefined as any, points.length]}>
         <cylinderGeometry args={[0.15, 0.15, 5, 4]} />
         <meshStandardMaterial color="#475569" metalness={0.8} roughness={0.2} />
@@ -771,43 +905,58 @@ const FlightEngine = () => {
 // ==========================================
 
 const CinematicRain = ({ active }: { active: boolean }) => {
-  const count = 20000;
-  const positions = useMemo(() => {
-    const pos = new Float32Array(count * 3);
-    for(let i=0; i<count; i++) {
-      pos[i*3] = (Math.random() - 0.5) * 2000;
-      pos[i*3+1] = Math.random() * 800;
-      pos[i*3+2] = (Math.random() - 0.5) * 2000;
-    }
-    return pos;
+  const count = 3000;
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const progressRef = useRef<Float32Array>(new Float32Array(count).map(() => Math.random()));
+  
+  const basePositions = useMemo(() => {
+    return Array.from({ length: count }, () => ({
+      ox: (Math.random() - 0.5) * 1200,
+      oz: (Math.random() - 0.5) * 1200,
+      speed: 180 + Math.random() * 120,
+      height: 300 + Math.random() * 200,
+    }));
   }, []);
-  
-  const pointsRef = useRef<THREE.Points>(null);
+
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
   useFrame((state, delta) => {
-    if(!active || !pointsRef.current) return;
-    const pos = pointsRef.current.geometry.attributes.position.array as Float32Array;
-    const camPos = state.camera.position;
-    for(let i=0; i<count; i++) {
-      pos[i*3+1] -= 400 * delta; // heavy falling speed
-      if (pos[i*3+1] < 0) pos[i*3+1] = 800;
-      
-      // wrap X and Z around camera to make it infinite
-      if (pos[i*3] < camPos.x - 1000) pos[i*3] += 2000;
-      if (pos[i*3] > camPos.x + 1000) pos[i*3] -= 2000;
-      if (pos[i*3+2] < camPos.z - 1000) pos[i*3+2] += 2000;
-      if (pos[i*3+2] > camPos.z + 1000) pos[i*3+2] -= 2000;
+    if (!active || !meshRef.current) return;
+    const camX = state.camera.position.x;
+    const camZ = state.camera.position.z;
+
+    for (let i = 0; i < count; i++) {
+      const b = basePositions[i];
+      progressRef.current[i] += b.speed * delta;
+      if (progressRef.current[i] > b.height) progressRef.current[i] = 0;
+
+      const y = b.height - progressRef.current[i];
+      const x = camX + b.ox;
+      const z = camZ + b.oz;
+
+      dummy.position.set(x, y, z);
+      dummy.scale.set(0.06, 2.5 + Math.random() * 0.5, 0.06);
+      dummy.updateMatrix();
+      meshRef.current.setMatrixAt(i, dummy.matrix);
     }
-    pointsRef.current.geometry.attributes.position.needsUpdate = true;
+    meshRef.current.instanceMatrix.needsUpdate = true;
   });
-  
+
   if (!active) return null;
   return (
-    <points ref={pointsRef}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
-      </bufferGeometry>
-      <pointsMaterial color="#88ccff" size={1.5} transparent opacity={0.3} blending={THREE.AdditiveBlending} depthWrite={false} />
-    </points>
+    <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, count]}>
+      <cylinderGeometry args={[1, 1, 1, 3]} />
+      <meshStandardMaterial
+        color="#a5d8f7"
+        emissive="#a5d8f7"
+        emissiveIntensity={1.5}
+        transparent
+        opacity={0.55}
+        depthWrite={false}
+        depthTest={false}
+        blending={THREE.AdditiveBlending}
+      />
+    </instancedMesh>
   );
 };
 
@@ -1114,74 +1263,75 @@ const LiveMinimap = ({ roads, telemetryRef }: { roads: any[], telemetryRef: any 
 // ==========================================
 // MAIN SCENE
 // ==========================================
-const LandmarkInfoPanel = ({ landmark, onClose, onStartDriving }: { landmark: any, onClose: () => void, onStartDriving: () => void }) => {
+const ExpandedLandmarkPanel = ({ landmark, onClose, onStartDriving }: { landmark: any, onClose: () => void, onStartDriving: () => void }) => {
   if (!landmark) return null;
+  const colorObj = getCategoryColor(landmark.category);
   return (
-    <div className="absolute right-6 top-24 w-80 bg-black/70 backdrop-blur-xl border border-white/10 rounded-lg p-6 text-white shadow-2xl z-50 animate-in slide-in-from-right-8 duration-300">
-      <div className="flex items-center gap-3 mb-4 border-b border-white/10 pb-4">
-        <div className={`w-12 h-12 rounded-lg ${
-          landmark.category === "ev_station" ? "bg-green-500/20 text-green-400 border border-green-500/30" : 
-          "bg-indigo-500/20 text-indigo-400 border border-indigo-500/30"
-        } flex items-center justify-center`}>
-          <Building2 size={24} />
-        </div>
-        <div>
-          <h3 className="font-bold text-lg leading-tight">{landmark.name}</h3>
-          <p className="text-xs text-gray-400 uppercase tracking-wider">{landmark.category.replace('_', ' ')}</p>
-        </div>
-      </div>
-      
-      <div className="space-y-3">
-        <div className="bg-white/5 p-3 rounded-lg border border-white/5">
-          <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Status</div>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_5px_rgba(34,197,94,0.5)]"></div>
-            <span className="text-sm font-semibold text-green-400">Live API Link Active</span>
+    <div className="absolute inset-0 flex items-center justify-center pointer-events-auto z-[9999] bg-black/40 backdrop-blur-sm">
+      <div className="w-[450px] bg-gray/75 backdrop-blur-lg border border-white/20 rounded-2xl p-8 text-white shadow-2xl pointer-events-auto animate-in zoom-in-95 duration-300 relative">
+        <div className="flex items-center gap-4 mb-6 border-b border-white/10 pb-6">
+          <div className={`w-16 h-16 rounded-xl ${colorObj.bg} ${colorObj.text} border ${colorObj.border} flex items-center justify-center ${colorObj.shadow}`}>
+            <Building2 size={32} />
+          </div>
+          <div>
+            <h3 className="font-bold text-2xl leading-tight">{landmark.name}</h3>
+            <p className={`text-sm ${colorObj.text} uppercase tracking-wider mt-1`}>{landmark.category.replace('_', ' ')}</p>
           </div>
         </div>
         
-        {landmark.category === "ev_station" && (
-          <>
-            <div className="bg-white/5 p-3 rounded-lg border border-white/5">
-              <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Operator & Address</div>
-              <div className="text-sm font-medium">{landmark.operator}</div>
-              <div className="text-xs text-gray-300 mt-1">{landmark.address}</div>
+        <div className="space-y-4">
+          <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+            <div className="text-xs text-gray-400 uppercase tracking-widest mb-1.5">Status</div>
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
+              <span className="text-base font-semibold text-green-400">Live API Link Active</span>
             </div>
-            
-            <div className="bg-white/5 p-3 rounded-lg border border-white/5">
-              <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Available Connections</div>
-              <div className="space-y-1">
+          </div>
+          
+          {(landmark.operator || landmark.address) && (
+            <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+              <div className="text-xs text-gray-400 uppercase tracking-widest mb-1.5">Operator & Address</div>
+              {landmark.operator && <div className="text-base font-medium">{landmark.operator}</div>}
+              {landmark.address && <div className="text-sm text-gray-300 mt-1">{landmark.address}</div>}
+            </div>
+          )}
+          
+          {landmark.connections && (
+            <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+              <div className="text-xs text-gray-400 uppercase tracking-widest mb-2">Available Connections</div>
+              <div className="space-y-2">
                 {landmark.connections.map((c: string, idx: number) => (
-                  <div key={idx} className="text-xs text-green-300 flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 bg-green-400 rounded-full"></div>
+                  <div key={idx} className="text-sm text-green-300 flex items-center gap-3 bg-green-500/10 p-2 rounded border border-green-500/20">
+                    <div className="w-2 h-2 bg-green-400 rounded-full shadow-[0_0_5px_rgba(34,197,94,0.8)]"></div>
                     {c}
                   </div>
                 ))}
               </div>
             </div>
-          </>
-        )}
-        
-        {landmark.category !== "ev_station" && (
-          <div className="bg-white/5 p-3 rounded-lg border border-white/5">
-            <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Coordinates (X, Z)</div>
-            <div className="text-sm font-mono text-cyan-400">{Math.round(landmark.center[0])}, {Math.round(landmark.center[1])}</div>
-          </div>
-        )}
-      </div> 
-      <div className="mt-4 flex gap-2">
-        <button 
-          onClick={onStartDriving}
-          className="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded transition-colors text-xs tracking-widest uppercase shadow-[0_0_15px_rgba(220,38,38,0.5)] border border-red-500"
-        >
-          START DRIVING HERE
-        </button>
-        <button 
-          onClick={onClose}
-          className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded transition-colors text-xs font-bold tracking-wider"
-        >
-          CLOSE
-        </button>
+          )}
+          
+          {!landmark.connections && (
+             <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+               <div className="text-xs text-gray-400 uppercase tracking-widest mb-1.5">Coordinates (X, Z)</div>
+               <div className="text-base font-mono text-cyan-400">{Math.round(landmark.center[0])}, {Math.round(landmark.center[1])}</div>
+             </div>
+          )}
+        </div> 
+
+        <div className="mt-8 flex gap-4">
+          <button 
+            onClick={onStartDriving}
+            className="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-lg transition-colors text-sm tracking-widest uppercase shadow-[0_0_20px_rgba(220,38,38,0.5)] border border-red-500"
+          >
+            START DRIVING HERE
+          </button>
+          <button 
+            onClick={onClose}
+            className="px-8 py-3 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors text-sm font-bold tracking-wider border border-white/20"
+          >
+            CLOSE
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1194,8 +1344,46 @@ export const CityStreetViewer = () => {
   const [isNight, setIsNight] = useState(false);
   const [isRain, setIsRain] = useState(false);
   const [weather, setWeather] = useState<any>(null);
-  const [selectedLandmark, setSelectedLandmark] = useState<any>(null);
+  const [assetFilters, setAssetFilters] = useState<any>({ all: true });
+  const [cameraTarget, setCameraTarget] = useState<THREE.Vector3 | null>(null);
+  const [focusedLandmark, setFocusedLandmark] = useState<any>(null);
+  const [expandedLandmark, setExpandedLandmark] = useState<any>(null);
   const [isDriveMode, setIsDriveMode] = useState(false);
+
+  useEffect(() => {
+    const handleSim = (e: any) => {
+      if (e.detail.type === 'toggle-rain') setIsRain(prev => !prev);
+      if (e.detail.type === 'toggle-night') setIsNight(prev => !prev);
+    };
+    const handleFilter = (e: any) => setAssetFilters(e.detail);
+    
+    window.addEventListener('laip-sim', handleSim);
+    window.addEventListener('laip-asset-filter', handleFilter);
+    return () => {
+      window.removeEventListener('laip-sim', handleSim);
+      window.removeEventListener('laip-asset-filter', handleFilter);
+    };
+  }, []);
+
+  // Broadcast weather state to App.tsx whenever it changes
+  useEffect(() => {
+    if (weather) {
+      window.dispatchEvent(new CustomEvent('laip-weather', {
+        detail: { weather, isNight, isRain }
+      }));
+    }
+  }, [weather, isNight, isRain]);
+
+  const handleFlyTo = (st: any) => {
+    const pos = new THREE.Vector3(st.center[0], 0, st.center[1]);
+    setCameraTarget(pos);
+    setExpandedLandmark(null);
+    setFocusedLandmark(st);
+  };
+
+  const handleExpand = (st: any) => {
+    setExpandedLandmark(st);
+  };
   const [speed, setSpeed] = useState(0);
   const [startPos, setStartPos] = useState<number[] | null>(null);
   const telemetryRef = useRef({ x: 0, z: 0, heading: 0, street: "" });
@@ -1239,6 +1427,10 @@ export const CityStreetViewer = () => {
   // Force extreme cinematic conditions during GTA mode
   const renderNight = isNight || isDriveMode;
   const renderRain = isRain || isDriveMode;
+
+  useEffect(() => {
+    buildingMaterial.userData.uIsNight.value = renderNight ? 1 : 0;
+  }, [renderNight]);
   
   // Adjust lighting for better cinematic visibility
   const sunPos = renderNight ? [-300, -100, -300] : [500, 300, -500]; // Keep sun below horizon at night for Sky
@@ -1249,14 +1441,8 @@ export const CityStreetViewer = () => {
 
   return (
     <div className="flex-1 relative w-full h-full" style={{ backgroundColor: skyColor }}>
-      <div className="absolute top-0 left-0 w-full p-6 z-10 pointer-events-none flex justify-between">
+      <div className="absolute top-2 left-0 w-full p-4 z-10 pointer-events-none flex justify-between">
         <div>
-          <div className="text-cyan-400 font-mono text-sm font-bold tracking-widest flex items-center gap-2">
-            LAIP <span className="text-xs opacity-50">v1.0.0</span>
-            <div className="ml-4 bg-white/10 backdrop-blur border border-white/20 px-3 py-1 rounded text-white text-xs">
-              ZEON HUB <span className="bg-cyan-400 text-black px-2 ml-2 rounded font-bold">CITY STREET</span>
-            </div>
-          </div>
           <div className="text-white/60 text-xs font-mono uppercase tracking-widest mt-1">
             JP Nagar Infrastructure Node
           </div>
@@ -1267,30 +1453,6 @@ export const CityStreetViewer = () => {
               Syncing Massive OSM Drone Data (May take 10s)...
             </div>
           )}
-
-          {weather && (
-            <div className="mt-4 flex gap-2">
-              <div className="bg-black/40 backdrop-blur border border-white/10 text-white text-xs px-3 py-2 rounded">
-                <div className="text-gray-400 text-[10px] uppercase">Live Temp</div>
-                <div className="font-bold">{weather.temperature}°C</div>
-              </div>
-              <div className="bg-black/40 backdrop-blur border border-white/10 text-white text-xs px-3 py-2 rounded">
-                <div className="text-gray-400 text-[10px] uppercase">Atmosphere</div>
-                <div className="font-bold">{isRain ? "Rain" : (isNight ? "Night" : "Clear")}</div>
-              </div>
-              <div className="bg-black/40 backdrop-blur border border-white/10 text-white text-xs px-3 py-2 rounded">
-                <div className="text-gray-400 text-[10px] uppercase">Live Flights</div>
-                <div className="font-bold text-blue-400">OpenSky Active</div>
-              </div>
-            </div>
-          )}
-        </div>
-        
-        <div className="flex flex-col items-end pointer-events-auto">
-          <div className="flex items-center gap-2 text-xs font-mono text-white/80 bg-black/40 px-3 py-1.5 rounded-full backdrop-blur border border-white/10">
-            <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_10px_#22d3ee]"></span>
-            System Online
-          </div>
         </div>
       </div>
 
@@ -1348,18 +1510,18 @@ export const CityStreetViewer = () => {
       )}
 
       {!isDriveMode && (
-        <LandmarkInfoPanel 
-          landmark={selectedLandmark} 
-          onClose={() => setSelectedLandmark(null)} 
+        <ExpandedLandmarkPanel 
+          landmark={expandedLandmark} 
+          onClose={() => setExpandedLandmark(null)} 
           onStartDriving={() => {
-            setStartPos(selectedLandmark.center);
-            setSelectedLandmark(null);
+            setStartPos(expandedLandmark.center);
+            setExpandedLandmark(null);
             setIsDriveMode(true);
           }}
         />
       )}
 
-      <Canvas onClick={() => setSelectedLandmark(null)} shadows camera={{ position: [0, 800, 1000], fov: 40, far: 500000 }} gl={{ logarithmicDepthBuffer: true }}>
+      <Canvas onClick={() => setExpandedLandmark(null)} shadows camera={{ position: [0, 800, 1000], fov: 40, far: 500000 }} gl={{ logarithmicDepthBuffer: true }}>
         <color attach="background" args={[skyColor]} />
         
         <Sky 
@@ -1372,6 +1534,7 @@ export const CityStreetViewer = () => {
         <Environment preset={renderNight ? "night" : "city"} />
 
         <ambientLight intensity={ambientIntensity} color="#ffffff" />
+        <CameraController targetPos={cameraTarget} onArrived={() => setCameraTarget(null)} />
         <directionalLight 
           position={lightPos as [number, number, number]} 
           intensity={dirIntensity} 
@@ -1398,14 +1561,14 @@ export const CityStreetViewer = () => {
           {cityData?.lakes && <LakesLayer lakes={cityData.lakes} />}
 
           {/* Render Landmarks UI */}
-          {cityData && <LandmarksLayer buildings={cityData.buildings} onSelect={setSelectedLandmark} />}
+          {cityData && <LandmarksLayer buildings={cityData.buildings} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} assetFilters={assetFilters} />}
 
           {/* Real Trees & Procedural Lush Forest */}
           {cityData?.trees && <RealTrees trees={cityData.trees} />}
           <DenseForest lakes={cityData?.lakes} />
 
-          {/* Streetlights */}
-          {cityData?.roads && <StreetlightsLayer roads={cityData.roads} />}
+          {/* Streetlights — pass isNight to boost glow */}
+          {cityData?.roads && <StreetlightsLayer roads={cityData.roads} isNight={renderNight} />}
 
           {/* Project Nolan-Star Driving Features */}
           <DriveableVehicle 
@@ -1419,7 +1582,13 @@ export const CityStreetViewer = () => {
           <CinematicRain active={renderRain} />
 
           {/* Dynamic Infrastructure */}
-          <EVStationsLayer stations={evStations} onSelect={setSelectedLandmark} />
+          <EVStationsLayer 
+            stations={evStations} 
+            onFlyTo={handleFlyTo} 
+            onExpand={handleExpand} 
+            focusedLandmark={focusedLandmark}
+            assetFilters={assetFilters}
+          />
 
           {/* Dynamic Traffic Engine (hide if driving to avoid collision glitches) */}
           {!isDriveMode && cityData?.roads && <TrafficEngine roads={cityData.roads} />}
