@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+@theme {
+  --color-laip-bg: #13111c;
+  --color-laip-cyan: #00f0ff;
+  --color-laip-orange: #ff7a00;
+  --color-laip-panel: rgba(255, 255, 255, 0.03);
+  --color-laip-border: rgba(255, 255, 255, 0.1);
+}
+
+@layer base {
+  body {
+    @apply bg-laip-bg text-white overflow-hidden;
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+}
+
+/* Full-Screen GTA Drive Mode Overrides */
+body.drive-mode aside, 
+body.drive-mode header,
+body.drive-mode .right-panel-override, 
+body.drive-mode > div > div > .w-80, /* Right Panel */
+body.drive-mode > div > .w-72 /* Left Sidebar */ {
+  display: none !important;
+}
