@@ -43,7 +43,7 @@ const CollapsibleSection = ({ title, children, defaultExpanded = true }: any) =>
   );
 };
 
-export const Sidebar = ({ isNight = false, isRain = false }: { isNight?: boolean, isRain?: boolean }) => {
+export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, assetCounts }: { isNight?: boolean, isRain?: boolean, isEvSim?: boolean, assetCounts?: any }) => {
   const [assetFilters, setAssetFilters] = useState({
     all: true,
     apartments: false,
@@ -76,13 +76,24 @@ export const Sidebar = ({ isNight = false, isRain = false }: { isNight?: boolean
           <Building2 size={20} className="text-laip-cyan" />
         </div>
         <div>
-          <h1 className="text-lg font-bold tracking-wider leading-tight">LAIP</h1>
-          <div className="text-[10px] text-laip-cyan uppercase tracking-widest font-semibold">Command Center</div>
+          <div className="flex items-start gap-2">
+            <h1 className="text-lg font-bold tracking-wider leading-tight">
+              LAIP
+            </h1>
+
+            <span className="text-[9px] text-gray-400 font-medium mt-0.5">
+              v1.0.0
+            </span>
+          </div>
+
+          <div className="text-[10px] text-laip-cyan uppercase tracking-widest font-semibold">
+            Management System
+          </div>
         </div>
       </div>
       
       <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-        <CollapsibleSection title="Asset Hierarchy" defaultExpanded>
+        <CollapsibleSection title="Asset Hierarchy" defaultExpanded={false}>
           <TreeNode label="HQ Campus" icon={Building2} defaultExpanded>
             <TreeNode label="Building A" icon={Building2} defaultExpanded>
               <TreeNode label="Floor 1" icon={Layers}>
@@ -104,11 +115,11 @@ export const Sidebar = ({ isNight = false, isRain = false }: { isNight?: boolean
         <CollapsibleSection title="Assets" defaultExpanded>
           <div className="space-y-2.5 text-sm text-gray-300 ml-2">
             {[
-              { id: 'all', label: 'All' },
-              { id: 'apartments', label: 'Apartments' },
-              { id: 'restaurants', label: 'Restaurants' },
-              { id: 'hospital', label: 'Hospital' },
-              { id: 'evStations', label: 'EV Stations' }
+              { id: 'all', label: 'All', count: assetCounts ? (assetCounts.apartments + assetCounts.restaurants + assetCounts.hospital + assetCounts.evStations) : 0 },
+              { id: 'apartments', label: 'Apartments', count: assetCounts?.apartments || 0 },
+              { id: 'restaurants', label: 'Restaurants', count: assetCounts?.restaurants || 0 },
+              { id: 'hospital', label: 'Hospital', count: assetCounts?.hospital || 0 },
+              { id: 'evStations', label: 'EV Stations', count: assetCounts?.evStations || 0 }
             ].map(item => (
               <label key={item.id} className="flex items-center gap-3 cursor-pointer group transition-colors ml-[32px] py-0.5">
                 <input 
@@ -117,13 +128,13 @@ export const Sidebar = ({ isNight = false, isRain = false }: { isNight?: boolean
                   onChange={() => handleFilterChange(item.id as keyof typeof assetFilters)}
                   className="w-4 h-4 appearance-none rounded-sm border border-white/20 bg-black/50 checked:bg-laip-cyan/20 checked:border-laip-cyan cursor-pointer transition-all relative flex items-center justify-center after:content-[''] checked:after:block after:hidden after:w-1.5 after:h-2.5 after:border-r-2 after:border-b-2 after:border-laip-cyan after:rotate-45 after:-mt-1 hover:border-white/40 shadow-[0_0_10px_rgba(0,240,255,0)] checked:shadow-[0_0_10px_rgba(0,240,255,0.3)]"
                 />
-                <span className="text-gray-400 group-hover:text-gray-200 transition-colors">{item.label}</span>
+                <span className="text-gray-400 group-hover:text-gray-200 transition-colors">{item.label} {item.count ? `(${item.count})` : ''}</span>
               </label>
             ))}
           </div>
         </CollapsibleSection>
 
-        <CollapsibleSection title="Simulation Engine" defaultExpanded>
+        <CollapsibleSection title="Simulations" defaultExpanded>
           <div className="space-y-1">
             <button 
               onClick={() => window.dispatchEvent(new CustomEvent('laip-sim', { detail: { type: 'toggle-rain' } }))}
@@ -154,9 +165,30 @@ export const Sidebar = ({ isNight = false, isRain = false }: { isNight?: boolean
 
         <CollapsibleSection title="Simulation Use Cases" defaultExpanded>
           <div className="space-y-1">
-            <button className="w-full flex items-center p-2 rounded text-sm transition-all border cursor-pointer hover:bg-white/10 border-transparent text-gray-200">
-              <EvCharger size={16} className="mr-3 text-cyan-400" />
+            <button 
+              onClick={() => {
+                const nextState = !isEvSim;
+                window.dispatchEvent(new CustomEvent('laip-ev-sim', { detail: { type: 'toggle-ev-sim' } }));
+                if (nextState) {
+                  // Select only EV stations when turning simulation ON
+                  setAssetFilters({
+                    all: false,
+                    apartments: false,
+                    restaurants: false,
+                    hospital: false,
+                    evStations: true
+                  });
+                }
+              }}
+              className={`w-full flex items-center p-2 rounded text-sm transition-all border cursor-pointer ${
+                isEvSim 
+                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.3)]' 
+                  : 'hover:bg-white/10 border-transparent text-gray-200'
+              }`}
+            >
+              <EvCharger size={16} className={`mr-3 ${isEvSim ? 'text-amber-400' : 'text-amber-400/60'}`} />
               <span>EV Station Simulation</span>
+              {isEvSim && <span className="ml-auto text-[10px] font-bold text-amber-400 uppercase tracking-wider">ON</span>}
             </button>
           </div>
         </CollapsibleSection>

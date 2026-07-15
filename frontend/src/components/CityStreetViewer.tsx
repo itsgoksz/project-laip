@@ -5,7 +5,94 @@ import { EffectComposer, N8AO, Bloom, Vignette, ToneMapping, DepthOfField } from
 import { ToneMappingMode } from 'postprocessing';
 import * as THREE from 'three';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { Building2 } from 'lucide-react';
+import { Building2, Zap, Radio } from 'lucide-react';
+
+// ==========================================
+// BESCOM POWER GRID MOCK DATA
+// Based on BESCOM JP Nagar 66/11kV Distribution Zone
+// ==========================================
+
+// These positions are chosen to spread across the map:
+// Hub: far south-west open area (large isolated building)
+// Sub-Stations: spread across north, south-east, and west clusters
+const POWER_GRID_HUB = {
+  id: 'bescom-hub-1',
+  name: 'BESCOM JP Nagar Receiving Station',
+  category: 'main_power_grid',
+  // Positioned at a large isolated building (south-west corner of map)
+  // These coords will be overridden at runtime by picking a real large building
+  center: [-1200, -900] as [number, number],
+  details: {
+    voltage: '66 kV',
+    capacity: '40 MVA',
+    loadFactor: '72%',
+    feederLines: 6,
+    connectedSubstations: 3,
+    operator: 'BESCOM (Bangalore Electricity Supply Company)',
+    zone: 'JP Nagar Distribution Zone',
+    status: 'Operational',
+    peakDemand: '28.8 MVA',
+    annualUnits: '214 MU',
+    transformerRating: '66/11 kV, 2×20 MVA',
+  }
+};
+
+const POWER_SUBSTATIONS = [
+  {
+    id: 'bescom-sub-1',
+    name: 'BESCOM Sarakki Sub-Station',
+    category: 'ev_substation',
+    center: [-300, -600] as [number, number],
+    evStationIds: [] as string[], // assigned at runtime by proximity
+    details: {
+      voltage: '11 kV → 415 V',
+      capacity: '8 MVA',
+      loadFactor: '68%',
+      connectedEVStations: 4,
+      operator: 'BESCOM',
+      feederID: 'JPR-F04',
+      transformerRating: '11/0.415 kV, 500 kVA',
+      status: 'Operational',
+      maxCurrent: '418 A',
+    }
+  },
+  {
+    id: 'bescom-sub-2',
+    name: 'BESCOM BTM Layout Sub-Station',
+    category: 'ev_substation',
+    center: [500, 400] as [number, number],
+    evStationIds: [] as string[],
+    details: {
+      voltage: '11 kV → 415 V',
+      capacity: '6 MVA',
+      loadFactor: '61%',
+      connectedEVStations: 3,
+      operator: 'BESCOM',
+      feederID: 'BTM-F07',
+      transformerRating: '11/0.415 kV, 400 kVA',
+      status: 'Operational',
+      maxCurrent: '315 A',
+    }
+  },
+  {
+    id: 'bescom-sub-3',
+    name: 'BESCOM Bannerghatta Rd Sub-Station',
+    category: 'ev_substation',
+    center: [-800, 500] as [number, number],
+    evStationIds: [] as string[],
+    details: {
+      voltage: '11 kV → 415 V',
+      capacity: '5 MVA',
+      loadFactor: '55%',
+      connectedEVStations: 3,
+      operator: 'BESCOM',
+      feederID: 'BNR-F02',
+      transformerRating: '11/0.415 kV, 315 kVA',
+      status: 'Operational',
+      maxCurrent: '262 A',
+    }
+  },
+];
 
 // --- Static Geometry Components ---
 
@@ -341,8 +428,10 @@ const CameraController = ({ targetPos, onArrived }: { targetPos: THREE.Vector3 |
 
   useEffect(() => {
     if (targetPos) {
-      targetLookAt.current.copy(targetPos);
-      targetCameraPos.current.set(targetPos.x, 200, targetPos.z + 300); 
+      targetLookAt.current.set(targetPos.x, 0, targetPos.z);
+      const height = targetPos.y > 0 ? targetPos.y : 200;
+      const zOffset = targetPos.y > 0 ? targetPos.y * 1.2 : 300;
+      targetCameraPos.current.set(targetPos.x, height, targetPos.z + zOffset); 
       isAnimating.current = true;
     }
   }, [targetPos]);
@@ -407,6 +496,384 @@ const LandmarkMarker = ({ st, onFlyTo, onExpand }: { st: any, onFlyTo: (st: any)
         <div className="w-[2px] h-20 mt-0.5" style={{ background: `linear-gradient(to bottom, ${colorObj.hex}cc, transparent)`, filter: colorObj.hexShadow }}></div>
       </div>
     </Html>
+  );
+};
+
+// Power grid category colors
+const getPowerGridColor = (cat: string) => {
+  if (cat === 'main_power_grid') return {
+    text: 'text-red-400', bg: 'bg-red-500/20', border: 'border-red-500/30',
+    shadow: 'shadow-[0_0_5px_rgba(239,68,68,0.8)]', hex: '#ef4444', hexShadow: 'drop-shadow(0 0 6px #ef4444)'
+  };
+  // ev_substation
+  return {
+    text: 'text-yellow-400', bg: 'bg-yellow-500/20', border: 'border-yellow-500/30',
+    shadow: 'shadow-[0_0_5px_rgba(234,179,8,0.8)]', hex: '#eab308', hexShadow: 'drop-shadow(0 0 6px #eab308)'
+  };
+};
+
+// Reuses exact same visual style as LandmarkMarker but with power grid icon/colors
+const PowerGridMarker = ({ node, onFlyTo, onExpand }: { node: any, onFlyTo: (n: any) => void, onExpand: (n: any) => void }) => {
+  const { camera } = useThree();
+  const colorObj = getPowerGridColor(node.category);
+  const isHub = node.category === 'main_power_grid';
+  const Icon = isHub ? Zap : Radio;
+
+  const handleClick = (e: any) => {
+    e.stopPropagation();
+    const stPos = new THREE.Vector3(node.center[0], 0, node.center[1]);
+    const targetCamPos = new THREE.Vector3(stPos.x, 200, stPos.z + 300);
+    const dist = camera.position.distanceTo(targetCamPos);
+    if (dist > 80) {
+      onFlyTo(node);
+    } else {
+      onExpand(node);
+    }
+  };
+
+  const labelText = isHub ? 'Main Power Grid' : 'EV Sub-Station';
+
+  return (
+    <Html position={[0, isHub ? 80 : 60, 0]} center zIndexRange={[200, 0]}>
+      <div className="flex flex-col items-center">
+        <div
+          onClick={handleClick}
+          className={`bg-black/40 backdrop-blur-sm border ${colorObj.border} p-1 px-2 rounded cursor-pointer pointer-events-auto hover:bg-black/60 transition-all text-white min-w-[80px] text-center shadow-xl ${colorObj.shadow}`}
+          title={node.name}
+        >
+          <div className="flex items-center justify-center gap-1 mb-0.5">
+            <Icon size={8} className={colorObj.text} />
+            <div className="text-[10px] font-bold whitespace-nowrap">{node.name}</div>
+          </div>
+          <div className={`text-[7px] ${colorObj.text} uppercase tracking-widest font-semibold`}>{labelText}</div>
+        </div>
+        <div className="w-[2px] mt-0.5" style={{ height: isHub ? '100px' : '80px', background: `linear-gradient(to bottom, ${colorObj.hex}ee, transparent)`, filter: colorObj.hexShadow }}></div>
+      </div>
+    </Html>
+  );
+};
+
+// Expanded panel for power grid nodes (Hub / Sub-Station)
+const PowerGridExpandedPanel = ({ node, onClose }: { node: any, onClose: () => void }) => {
+  if (!node) return null;
+  const colorObj = getPowerGridColor(node.category);
+  const isHub = node.category === 'main_power_grid';
+  const Icon = isHub ? Zap : Radio;
+  const d = node.details;
+
+  return (
+    <div className="absolute inset-0 flex items-center justify-center pointer-events-auto z-[9999] bg-black/40 backdrop-blur-sm">
+      <div className="w-[480px] bg-gray-900/90 backdrop-blur-lg border border-white/20 rounded-2xl p-8 text-white shadow-2xl pointer-events-auto relative">
+        {/* Header */}
+        <div className={`flex items-center gap-4 mb-6 border-b border-white/10 pb-6`}>
+          <div className={`w-16 h-16 rounded-xl ${colorObj.bg} ${colorObj.text} border ${colorObj.border} flex items-center justify-center ${colorObj.shadow}`}>
+            <Icon size={32} />
+          </div>
+          <div>
+            <h3 className="font-bold text-2xl leading-tight">{node.name}</h3>
+            <p className={`text-sm ${colorObj.text} uppercase tracking-wider mt-1`}>{isHub ? 'Main Power Grid Hub' : 'EV Sub-Station'}</p>
+          </div>
+        </div>
+
+        {/* Status */}
+        <div className="bg-white/5 p-4 rounded-xl border border-white/10 mb-4">
+          <div className="text-xs text-gray-400 uppercase tracking-widest mb-1.5">Status</div>
+          <div className="flex items-center gap-2">
+            <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
+            <span className="text-base font-semibold text-green-400">{d.status} — BESCOM Grid Live</span>
+          </div>
+        </div>
+
+        {/* Grid data */}
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+            <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Voltage</div>
+            <div className={`text-lg font-bold ${colorObj.text}`}>{d.voltage}</div>
+          </div>
+          <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+            <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Capacity</div>
+            <div className={`text-lg font-bold ${colorObj.text}`}>{d.capacity}</div>
+          </div>
+          <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+            <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Load Factor</div>
+            <div className="text-lg font-bold text-white">{d.loadFactor}</div>
+          </div>
+          <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+            <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">
+              {isHub ? 'Connected Sub-Stations' : 'Connected EV Stations'}
+            </div>
+            <div className="text-lg font-bold text-white">
+              {isHub ? d.connectedSubstations : d.connectedEVStations}
+            </div>
+          </div>
+          {isHub && (
+            <>
+              <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Feeder Lines</div>
+                <div className="text-lg font-bold text-white">{d.feederLines}</div>
+              </div>
+              <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Peak Demand</div>
+                <div className="text-lg font-bold text-white">{d.peakDemand}</div>
+              </div>
+            </>
+          )}
+          {!isHub && (
+            <>
+              <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Feeder ID</div>
+                <div className="text-lg font-bold text-white">{d.feederID}</div>
+              </div>
+              <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Max Current</div>
+                <div className="text-lg font-bold text-white">{d.maxCurrent}</div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Transformer / Operator */}
+        <div className="bg-white/5 p-3 rounded-xl border border-white/10 mb-6">
+          <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Transformer Rating</div>
+          <div className="text-sm font-medium">{d.transformerRating}</div>
+          <div className="text-xs text-gray-400 mt-1">{d.operator || 'BESCOM'}</div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors text-sm font-bold tracking-wider border border-white/20"
+        >
+          CLOSE
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// Animated electricity flow along a curve
+const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: THREE.Vector3[], color: string, particleColor: string, isHub: boolean }) => {
+  const particleRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const PARTICLE_COUNT = 18;
+  const offsets = useMemo(() => Array.from({ length: PARTICLE_COUNT }, (_, i) => i / PARTICLE_COUNT), []);
+  const progressRef = useRef<Float32Array>(new Float32Array(PARTICLE_COUNT).map((_, i) => i / PARTICLE_COUNT));
+  const tubeRef = useRef<THREE.Mesh>(null);
+
+  const curve = useMemo(() => {
+    if (points.length < 2) return null;
+    
+    // Create a Manhattan (L-shaped) path at ground level
+    // This gives a "linear level along the roads" look
+    const pt1 = new THREE.Vector3(points[0].x, 1.5, points[0].z);
+    const pt2 = new THREE.Vector3(points[0].x, 1.5, points[points.length - 1].z);
+    const pt3 = new THREE.Vector3(points[points.length - 1].x, 1.5, points[points.length - 1].z);
+    
+    const pathPoints = [pt1, pt2, pt3];
+    return new THREE.CatmullRomCurve3(pathPoints, false, 'catmullrom', 0.05); // low tension for straight lines
+  }, [points, isHub]);
+
+  const tubeGeo = useMemo(() => {
+    if (!curve) return null;
+    return new THREE.TubeGeometry(curve, 40, isHub ? 1.8 : 1.0, 8, false);
+  }, [curve, isHub]);
+
+  useFrame((_, delta) => {
+    if (!curve) return;
+    const speed = isHub ? 0.18 : 0.28;
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      progressRef.current[i] = (progressRef.current[i] + speed * delta) % 1.0;
+      const mesh = particleRefs.current[i];
+      if (mesh) {
+        const pt = curve.getPointAt(progressRef.current[i]);
+        mesh.position.copy(pt);
+      }
+    }
+  });
+
+  if (!curve || !tubeGeo) return null;
+
+  return (
+    <group>
+      {/* Glowing pipe */}
+      <mesh ref={tubeRef} geometry={tubeGeo}>
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={isHub ? 2.5 : 1.8}
+          transparent
+          opacity={isHub ? 0.55 : 0.45}
+          depthWrite={false}
+          depthTest={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      {/* Flowing electricity particles */}
+      {offsets.map((_, i) => (
+        <mesh
+          key={i}
+          ref={el => { particleRefs.current[i] = el; }}
+        >
+          <sphereGeometry args={[isHub ? 2.5 : 1.8, 6, 6]} />
+          <meshStandardMaterial
+            color={particleColor}
+            emissive={particleColor}
+            emissiveIntensity={isHub ? 12 : 8}
+            transparent
+            opacity={0.9}
+            depthWrite={false}
+            depthTest={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+};
+
+// Full EV Simulation overlay layer
+const EVSimulationLayer = ({ evStations, buildings, onFlyTo, onExpand, focusedNode }: {
+  evStations: any[],
+  buildings: any[],
+  onFlyTo: (n: any) => void,
+  onExpand: (n: any) => void,
+  focusedNode: any,
+}) => {
+
+  // Trigger wide view zoom on mount (once)
+  useEffect(() => {
+    onFlyTo({ center: [0, 0], y: 2500 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Use static buildings for the Hub and sub-stations
+  const { hub, substations, evToSubMap } = useMemo(() => {
+    if (!buildings || buildings.length === 0 || evStations.length === 0) {
+      return { hub: null, substations: [], evToSubMap: {} };
+    }
+
+    const validBuildings = buildings.filter(b => b.height > 10 && b.name && b.center);
+    if (validBuildings.length === 0) return { hub: null, substations: [], evToSubMap: {} };
+
+    // Pick deterministic buildings
+    const hubBuilding = validBuildings[Math.min(50, validBuildings.length - 1)];
+    const hubNode = {
+      ...POWER_GRID_HUB,
+      center: hubBuilding.center as [number, number],
+      height: hubBuilding.height,
+    };
+
+    const chosenSubs = [
+      validBuildings[Math.min(100, validBuildings.length - 1)],
+      validBuildings[Math.min(250, validBuildings.length - 1)],
+      validBuildings[Math.min(400, validBuildings.length - 1)]
+    ].filter((b, i, a) => b && b.id !== hubBuilding.id && a.findIndex(x => x.id === b.id) === i);
+
+    // Fill to 3 if needed
+    let idx = 0;
+    while (chosenSubs.length < 3 && idx < validBuildings.length) {
+      const b = validBuildings[idx++];
+      if (b.id !== hubBuilding.id && !chosenSubs.find(s => s.id === b.id)) {
+        chosenSubs.push(b);
+      }
+    }
+
+    const subNodes = POWER_SUBSTATIONS.slice(0, chosenSubs.length).map((sub, i) => ({
+      ...sub,
+      center: chosenSubs[i].center as [number, number],
+      height: chosenSubs[i].height,
+    }));
+
+    // Assign each EV station to its closest sub-station
+    const evToSubMap: Record<string, number> = {};
+    evStations.forEach(ev => {
+      let closestIdx = 0;
+      let closestDist = Infinity;
+      subNodes.forEach((sub, i) => {
+        const dx = ev.center[0] - sub.center[0];
+        const dz = ev.center[1] - sub.center[1];
+        const dist = Math.sqrt(dx*dx + dz*dz);
+        if (dist < closestDist) { closestDist = dist; closestIdx = i; }
+      });
+      evToSubMap[ev.id] = closestIdx;
+    });
+
+    return { hub: hubNode, substations: subNodes, evToSubMap };
+  }, [buildings, evStations]);
+
+  if (!hub) return null;
+
+  const hubPos = new THREE.Vector3(hub.center[0], 12, hub.center[1]);
+
+  return (
+    <group>
+      {/* Hub glow pillar */}
+      <mesh position={[hub.center[0], 50, hub.center[1]]}>
+        <cylinderGeometry args={[2, 2, 100, 8]} />
+        <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={3} transparent opacity={0.25} blending={THREE.AdditiveBlending} depthWrite={false} />
+      </mesh>
+
+      {/* Hub marker */}
+      <group position={[hub.center[0], 0, hub.center[1]]}>
+        {focusedNode?.id === hub.id && (
+          <mesh position={[0, (hub.height || 30) / 2, 0]}>
+            <boxGeometry args={[50, (hub.height || 30) + 15, 50]} />
+            <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={2} wireframe transparent opacity={0.5} />
+          </mesh>
+        )}
+        <PowerGridMarker node={hub} onFlyTo={onFlyTo} onExpand={onExpand} />
+      </group>
+
+      {/* Hub → Sub-Station pipelines */}
+      {substations.map((sub) => (
+        <ElectricityPipeline
+          key={`hub-${sub.id}`}
+          points={[hubPos, new THREE.Vector3(sub.center[0], 12, sub.center[1])]}
+          color="#ef4444"
+          particleColor="#fca5a5"
+          isHub={true}
+        />
+      ))}
+
+      {/* Sub-stations */}
+      {substations.map((sub, subIdx) => {
+        const subPos = new THREE.Vector3(sub.center[0], 12, sub.center[1]);
+        const myEVStations = evStations.filter(ev => evToSubMap[ev.id] === subIdx);
+        const colorObj = getPowerGridColor(sub.category);
+
+        return (
+          <group key={sub.id}>
+            {/* Sub-station glow pillar */}
+            <mesh position={[sub.center[0], 35, sub.center[1]]}>
+              <cylinderGeometry args={[1.2, 1.2, 70, 8]} />
+              <meshStandardMaterial color={colorObj.hex} emissive={colorObj.hex} emissiveIntensity={2.5} transparent opacity={0.22} blending={THREE.AdditiveBlending} depthWrite={false} />
+            </mesh>
+
+            {/* Sub-station marker */}
+            <group position={[sub.center[0], 0, sub.center[1]]}>
+              {focusedNode?.id === sub.id && (
+                <mesh position={[0, (sub.height || 20) / 2, 0]}>
+                  <boxGeometry args={[40, (sub.height || 20) + 12, 40]} />
+                  <meshStandardMaterial color={colorObj.hex} emissive={colorObj.hex} emissiveIntensity={2} wireframe transparent opacity={0.5} />
+                </mesh>
+              )}
+              <PowerGridMarker node={sub} onFlyTo={onFlyTo} onExpand={onExpand} />
+            </group>
+
+            {/* Sub-Station → EV Station pipelines */}
+            {myEVStations.map(ev => (
+              <ElectricityPipeline
+                key={`sub-${sub.id}-ev-${ev.id}`}
+                points={[subPos, new THREE.Vector3(ev.center[0], 2, ev.center[1])]}
+                color="#eab308"
+                particleColor="#fde047"
+                isHub={false}
+              />
+            ))}
+          </group>
+        );
+      })}
+    </group>
   );
 };
 
@@ -846,7 +1313,7 @@ const Flight = ({ data }: { data: any }) => {
   const groupRef = useRef<THREE.Group>(null);
   const posRef = useRef(new THREE.Vector3(...data.position));
 
-  useFrame((state, delta) => {
+  useFrame((_, delta) => {
     if (!groupRef.current) return;
     const rad = THREE.MathUtils.degToRad(data.heading);
     const vx = Math.sin(rad) * data.velocity * 0.1 * delta;
@@ -866,8 +1333,8 @@ const Flight = ({ data }: { data: any }) => {
         </div>
       </Html>
       <group rotation={[0, -THREE.MathUtils.degToRad(data.heading), 0]}>
-        <mesh>
-          <cylinderGeometry args={[2, 2, 16, 8]} rotation={[Math.PI/2, 0, 0]} />
+        <mesh rotation={[Math.PI/2, 0, 0]}>
+          <cylinderGeometry args={[2, 2, 16, 8]} />
           <meshStandardMaterial color="#ffffff" />
         </mesh>
         <mesh position={[0, 0, -2]}>
@@ -904,13 +1371,13 @@ const FlightEngine = () => {
 // CINEMATIC DRIVING ENGINES (PROJECT NOLAN-STAR)
 // ==========================================
 
-const CinematicRain = ({ active }: { active: boolean }) => {
-  const count = 3000;
+const CinematicRain = ({ active, intensity = 5 }: { active: boolean, intensity?: number }) => {
+  const count = active ? Math.min(10000, Math.floor(intensity * 600)) : 0;
   const meshRef = useRef<THREE.InstancedMesh>(null);
-  const progressRef = useRef<Float32Array>(new Float32Array(count).map(() => Math.random()));
+  const progressRef = useRef<Float32Array>(new Float32Array(10000).map(() => Math.random()));
   
   const basePositions = useMemo(() => {
-    return Array.from({ length: count }, () => ({
+    return Array.from({ length: 10000 }, () => ({
       ox: (Math.random() - 0.5) * 1200,
       oz: (Math.random() - 0.5) * 1200,
       speed: 180 + Math.random() * 120,
@@ -1337,31 +1804,47 @@ const ExpandedLandmarkPanel = ({ landmark, onClose, onStartDriving }: { landmark
   );
 };
 
-export const CityStreetViewer = () => {
+export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { isShowFlights?: boolean, rainIntensity?: number }) => {
   const [cityData, setCityData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [evStations, setEvStations] = useState<any[]>([]);
-  const [isNight, setIsNight] = useState(false);
-  const [isRain, setIsRain] = useState(false);
+  const [isSimNight, setIsSimNight] = useState(false);
+  const [isSimRain, setIsSimRain] = useState(false);
   const [weather, setWeather] = useState<any>(null);
+
+  const isLiveNight = weather ? !weather.is_day : false;
+  const isLiveRain = weather ? weather.weather_code >= 61 : false;
   const [assetFilters, setAssetFilters] = useState<any>({ all: true });
   const [cameraTarget, setCameraTarget] = useState<THREE.Vector3 | null>(null);
   const [focusedLandmark, setFocusedLandmark] = useState<any>(null);
   const [expandedLandmark, setExpandedLandmark] = useState<any>(null);
   const [isDriveMode, setIsDriveMode] = useState(false);
+  // EV Simulation state
+  const [isEvSim, setIsEvSim] = useState(false);
+  const [focusedGridNode, setFocusedGridNode] = useState<any>(null);
+  const [expandedGridNode, setExpandedGridNode] = useState<any>(null);
 
   useEffect(() => {
     const handleSim = (e: any) => {
-      if (e.detail.type === 'toggle-rain') setIsRain(prev => !prev);
-      if (e.detail.type === 'toggle-night') setIsNight(prev => !prev);
+      if (e.detail.type === 'toggle-rain') setIsSimRain(prev => !prev);
+      if (e.detail.type === 'toggle-night') setIsSimNight(prev => !prev);
     };
     const handleFilter = (e: any) => setAssetFilters(e.detail);
-    
+    const handleEvSim = (e: any) => {
+      if (e.detail.type === 'toggle-ev-sim') {
+        setIsEvSim(prev => !prev);
+        setFocusedGridNode(null);
+        setExpandedGridNode(null);
+      }
+    };
+
     window.addEventListener('laip-sim', handleSim);
     window.addEventListener('laip-asset-filter', handleFilter);
+    window.addEventListener('laip-ev-sim', handleEvSim);
     return () => {
       window.removeEventListener('laip-sim', handleSim);
       window.removeEventListener('laip-asset-filter', handleFilter);
+      window.removeEventListener('laip-ev-sim', handleEvSim);
     };
   }, []);
 
@@ -1369,10 +1852,10 @@ export const CityStreetViewer = () => {
   useEffect(() => {
     if (weather) {
       window.dispatchEvent(new CustomEvent('laip-weather', {
-        detail: { weather, isNight, isRain }
+        detail: { weather }
       }));
     }
-  }, [weather, isNight, isRain]);
+  }, [weather]);
 
   const handleFlyTo = (st: any) => {
     const pos = new THREE.Vector3(st.center[0], 0, st.center[1]);
@@ -1407,12 +1890,30 @@ export const CityStreetViewer = () => {
       .then(data => {
         if (!data.error) {
           setWeather(data);
-          setIsNight(!data.is_day);
-          setIsRain(data.weather_code >= 61);
         }
       })
       .catch(e => console.error(e));
   }, []);
+
+  // Compute and dispatch asset counts when data loads
+  useEffect(() => {
+    if (!cityData?.buildings || evStations.length === 0) return;
+    
+    let apartments = 0;
+    let restaurants = 0;
+    let hospital = 0;
+
+    cityData.buildings.forEach((b: any) => {
+      if (!b.name) return;
+      if (b.category === "apartments" || b.category === "residential") apartments++;
+      if (b.category === "hospital") hospital++;
+      if (b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food") restaurants++;
+    });
+
+    window.dispatchEvent(new CustomEvent('laip-asset-counts', {
+      detail: { apartments, restaurants, hospital, evStations: evStations.length }
+    }));
+  }, [cityData, evStations]);
 
   // Global CSS override for full-screen Drive Mode
   useEffect(() => {
@@ -1425,8 +1926,8 @@ export const CityStreetViewer = () => {
   }, [isDriveMode]);
 
   // Force extreme cinematic conditions during GTA mode
-  const renderNight = isNight || isDriveMode;
-  const renderRain = isRain || isDriveMode;
+  const renderNight = isSimNight || isLiveNight;
+  const renderRain = isSimRain || isLiveRain || isDriveMode;
 
   useEffect(() => {
     buildingMaterial.userData.uIsNight.value = renderNight ? 1 : 0;
@@ -1456,14 +1957,14 @@ export const CityStreetViewer = () => {
         </div>
       </div>
 
-      {!isDriveMode && (
+      {/* {!isDriveMode && (
         <button 
           onClick={() => setIsDriveMode(true)}
           className="fixed bottom-6 right-6 bg-red-600 hover:bg-red-500 text-white font-bold px-8 py-3 rounded shadow-[0_0_20px_#dc2626] border border-red-400/50 z-50 animate-pulse tracking-widest uppercase transition-all"
         >
           Enter Vehicle Mode
         </button>
-      )}
+      )} */}
 
       {isDriveMode && (
         <div className="fixed inset-0 pointer-events-none z-50 flex flex-col justify-between">
@@ -1518,6 +2019,14 @@ export const CityStreetViewer = () => {
             setExpandedLandmark(null);
             setIsDriveMode(true);
           }}
+        />
+      )}
+
+      {/* Power Grid Expanded Panel */}
+      {!isDriveMode && expandedGridNode && (
+        <PowerGridExpandedPanel
+          node={expandedGridNode}
+          onClose={() => setExpandedGridNode(null)}
         />
       )}
 
@@ -1579,7 +2088,7 @@ export const CityStreetViewer = () => {
             startPos={startPos}
             telemetryRef={telemetryRef}
           />
-          <CinematicRain active={renderRain} />
+          <CinematicRain active={renderRain} intensity={rainIntensity} />
 
           {/* Dynamic Infrastructure */}
           <EVStationsLayer 
@@ -1590,11 +2099,27 @@ export const CityStreetViewer = () => {
             assetFilters={assetFilters}
           />
 
+          {/* EV Station Simulation Power Grid Layer */}
+          {isEvSim && cityData && (
+            <EVSimulationLayer
+              evStations={evStations}
+              buildings={cityData.buildings}
+              onFlyTo={(node) => {
+                const pos = new THREE.Vector3(node.center[0], node.y || 0, node.center[1]);
+                setCameraTarget(pos);
+                if (node.id) setFocusedGridNode(node);
+                setExpandedGridNode(null);
+              }}
+              onExpand={(node) => setExpandedGridNode(node)}
+              focusedNode={focusedGridNode}
+            />
+          )}
+
           {/* Dynamic Traffic Engine (hide if driving to avoid collision glitches) */}
           {!isDriveMode && cityData?.roads && <TrafficEngine roads={cityData.roads} />}
           
           {/* Dynamic Flight Engine */}
-          <FlightEngine />
+          {isShowFlights && <FlightEngine />}
         </group>
 
         {/* Orbit Controls tuned for massive drone view zooming */}
@@ -1608,10 +2133,11 @@ export const CityStreetViewer = () => {
           target={[0, 0, 0]}
         />
 
+        {/* @ts-ignore */}
         <EffectComposer disableNormalPass multisampling={0}>
           <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
           <Vignette eskil={false} offset={0.1} darkness={isDriveMode ? 1.2 : 1.0} />
-          {isDriveMode && <DepthOfField focusDistance={0} focalLength={0.02} bokehScale={2} height={480} />}
+          { (isDriveMode ? <DepthOfField focusDistance={0} focalLength={0.02} bokehScale={2} height={480} /> : null) as any }
           <N8AO aoRadius={12} intensity={renderNight ? 1.0 : 1.5} color="#0f172a" />
           <Bloom luminanceThreshold={isDriveMode ? 0.3 : (renderNight ? 0.4 : 1.5)} mipmapBlur intensity={isDriveMode ? 1.5 : (renderNight ? 1.0 : 0.05)} />
         </EffectComposer>
