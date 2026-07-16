@@ -5,7 +5,94 @@ import { EffectComposer, N8AO, Bloom, Vignette, ToneMapping, DepthOfField } from
 import { ToneMappingMode } from 'postprocessing';
 import * as THREE from 'three';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { Building2 } from 'lucide-react';
+import { Building2, Zap, Radio } from 'lucide-react';
+
+// ==========================================
+// BESCOM POWER GRID MOCK DATA
+// Based on BESCOM JP Nagar 66/11kV Distribution Zone
+// ==========================================
+
+// These positions are chosen to spread across the map:
+// Hub: far south-west open area (large isolated building)
+// Sub-Stations: spread across north, south-east, and west clusters
+const POWER_GRID_HUB = {
+  id: 'bescom-hub-1',
+  name: 'BESCOM JP Nagar Receiving Station',
+  category: 'main_power_grid',
+  // Positioned at a large isolated building (south-west corner of map)
+  // These coords will be overridden at runtime by picking a real large building
+  center: [-1200, -900] as [number, number],
+  details: {
+    voltage: '66 kV',
+    capacity: '40 MVA',
+    loadFactor: '72%',
+    feederLines: 6,
+    connectedSubstations: 3,
+    operator: 'BESCOM (Bangalore Electricity Supply Company)',
+    zone: 'JP Nagar Distribution Zone',
+    status: 'Operational',
+    peakDemand: '28.8 MVA',
+    annualUnits: '214 MU',
+    transformerRating: '66/11 kV, 2×20 MVA',
+  }
+};
+
+const POWER_SUBSTATIONS = [
+  {
+    id: 'bescom-sub-1',
+    name: 'BESCOM Sarakki Sub-Station',
+    category: 'ev_substation',
+    center: [-300, -600] as [number, number],
+    evStationIds: [] as string[], // assigned at runtime by proximity
+    details: {
+      voltage: '11 kV → 415 V',
+      capacity: '8 MVA',
+      loadFactor: '68%',
+      connectedEVStations: 4,
+      operator: 'BESCOM',
+      feederID: 'JPR-F04',
+      transformerRating: '11/0.415 kV, 500 kVA',
+      status: 'Operational',
+      maxCurrent: '418 A',
+    }
+  },
+  {
+    id: 'bescom-sub-2',
+    name: 'BESCOM BTM Layout Sub-Station',
+    category: 'ev_substation',
+    center: [500, 400] as [number, number],
+    evStationIds: [] as string[],
+    details: {
+      voltage: '11 kV → 415 V',
+      capacity: '6 MVA',
+      loadFactor: '61%',
+      connectedEVStations: 3,
+      operator: 'BESCOM',
+      feederID: 'BTM-F07',
+      transformerRating: '11/0.415 kV, 400 kVA',
+      status: 'Operational',
+      maxCurrent: '315 A',
+    }
+  },
+  {
+    id: 'bescom-sub-3',
+    name: 'BESCOM Bannerghatta Rd Sub-Station',
+    category: 'ev_substation',
+    center: [-800, 500] as [number, number],
+    evStationIds: [] as string[],
+    details: {
+      voltage: '11 kV → 415 V',
+      capacity: '5 MVA',
+      loadFactor: '55%',
+      connectedEVStations: 3,
+      operator: 'BESCOM',
+      feederID: 'BNR-F02',
+      transformerRating: '11/0.415 kV, 315 kVA',
+      status: 'Operational',
+      maxCurrent: '262 A',
+    }
+  },
+];
 
 // --- Static Geometry Components ---
 
@@ -18,8 +105,10 @@ const DroneMapBase = () => (
 );
 
 const buildingMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.1 });
+buildingMaterial.userData = { uIsNight: { value: 0 } };
 // Procedural Building Shader for windows, floors, and roofs (zero performance cost)
 buildingMaterial.onBeforeCompile = (shader) => {
+  shader.uniforms.uIsNight = buildingMaterial.userData.uIsNight;
   shader.vertexShader = shader.vertexShader.replace(
     '#include <common>',
     `#include <common>\n attribute float isApartment;\n varying vec3 vWorldPosition;\n varying vec3 vWorldNormal;\n varying float vIsApartment;`
@@ -30,12 +119,12 @@ buildingMaterial.onBeforeCompile = (shader) => {
   );
   shader.fragmentShader = shader.fragmentShader.replace(
     '#include <common>',
-    `#include <common>\n varying vec3 vWorldPosition;\n varying vec3 vWorldNormal;\n varying float vIsApartment;`
+    `#include <common>\n varying vec3 vWorldPosition;\n varying vec3 vWorldNormal;\n varying float vIsApartment;\n uniform float uIsNight;`
   );
   shader.fragmentShader = shader.fragmentShader.replace(
     '#include <color_fragment>',
     `#include <color_fragment>\n 
-     bool isRoof = vWorldNormal.y > 0.5;
+      bool isRoof = vWorldNormal.y > 0.5;
      if (isRoof) {
        // Roofs get a slightly darker, warmer terracotta/grey tint
        diffuseColor.rgb *= vec3(0.9, 0.85, 0.8);
@@ -50,10 +139,19 @@ buildingMaterial.onBeforeCompile = (shader) => {
        if (wy > 0.3 && wy < 0.7 && w > 0.3 && w < 0.7) {
          // Randomly toggle windows "on" and "off"
          float randomLight = fract(sin(dot(floor(vWorldPosition.xyz / 4.0), vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-         if (randomLight > 0.6) {
-           diffuseColor.rgb = vec3(0.9, 0.9, 0.7); // Warm lit window
+         
+         if (uIsNight > 0.5) {
+             if (randomLight > 0.95) {
+                diffuseColor.rgb = vec3(1.0, 0.8, 0.4); 
+             } else {
+                diffuseColor.rgb *= 0.1;
+             }
          } else {
-           diffuseColor.rgb *= 0.2; // Dark unlit glass
+             if (randomLight > 0.6) {
+               diffuseColor.rgb = vec3(0.9, 0.9, 0.7); 
+             } else {
+               diffuseColor.rgb *= 0.2; 
+             }
          }
        }
        
@@ -70,6 +168,24 @@ buildingMaterial.onBeforeCompile = (shader) => {
        // Ambient occlusion gradient (darker near ground)
        float groundAO = clamp(vWorldPosition.y / 20.0, 0.4, 1.0);
        diffuseColor.rgb *= groundAO;
+     }
+    `
+  );
+  
+  shader.fragmentShader = shader.fragmentShader.replace(
+    '#include <emissivemap_fragment>',
+    `#include <emissivemap_fragment>\n
+     if (!isRoof && uIsNight > 0.5) {
+       float wx = fract(vWorldPosition.x / 4.0);
+       float wz = fract(vWorldPosition.z / 4.0);
+       float wy = fract(vWorldPosition.y / 4.0);
+       float w = abs(vWorldNormal.x) > 0.5 ? wz : wx;
+       if (wy > 0.3 && wy < 0.7 && w > 0.3 && w < 0.7) {
+         float randomLight = fract(sin(dot(floor(vWorldPosition.xyz / 4.0), vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+         if (randomLight > 0.95) {
+            totalEmissiveRadiance += vec3(1.0, 0.7, 0.2) * 5.0; 
+         }
+       }
      }
     `
   );
@@ -305,23 +421,491 @@ const MergedCityMap = ({ buildings, roads }: { buildings: any[], roads: any[] })
 
 // --- Base Environment Layers ---
 
-const EVStationsLayer = ({ stations, onSelect }: { stations: any[], onSelect: (s: any) => void }) => {
-  if (!stations || stations.length === 0) return null;
+const CameraController = ({ targetPos, onArrived }: { targetPos: THREE.Vector3 | null, onArrived: () => void }) => {
+  const targetLookAt = useRef(new THREE.Vector3());
+  const targetCameraPos = useRef(new THREE.Vector3());
+  const isAnimating = useRef(false);
+
+  useEffect(() => {
+    if (targetPos) {
+      targetLookAt.current.set(targetPos.x, 0, targetPos.z);
+      const height = targetPos.y > 0 ? targetPos.y : 200;
+      const zOffset = targetPos.y > 0 ? targetPos.y * 1.2 : 300;
+      targetCameraPos.current.set(targetPos.x, height, targetPos.z + zOffset); 
+      isAnimating.current = true;
+    }
+  }, [targetPos]);
+
+  useFrame((state, delta) => {
+    if (isAnimating.current && targetPos) {
+      state.camera.position.lerp(targetCameraPos.current, 4 * delta);
+      if (state.controls) {
+        (state.controls as any).target.lerp(targetLookAt.current, 4 * delta);
+        (state.controls as any).update();
+      }
+      
+      if (state.camera.position.distanceTo(targetCameraPos.current) < 5) {
+        isAnimating.current = false;
+        onArrived();
+      }
+    }
+  });
+  return null;
+};
+
+const getCategoryColor = (cat: string) => {
+  if (cat === "mall" || cat === "commercial") return { text: "text-cyan-400", bg: "bg-cyan-500/20", border: "border-cyan-500/30", shadow: "shadow-[0_0_5px_rgba(34,211,238,0.8)]", hex: "#22d3ee", hexShadow: "drop-shadow(0 0 5px #22d3ee)" };
+  if (cat === "hospital") return { text: "text-red-500", bg: "bg-red-500/20", border: "border-red-500/30", shadow: "shadow-[0_0_5px_rgba(239,68,68,0.8)]", hex: "#ef4444", hexShadow: "drop-shadow(0 0 5px #ef4444)" };
+  if (cat === "restaurant" || cat === "cafe" || cat === "fast_food") return { text: "text-rose-400", bg: "bg-rose-500/20", border: "border-rose-500/30", shadow: "shadow-[0_0_5px_rgba(251,113,133,0.8)]", hex: "#fb7185", hexShadow: "drop-shadow(0 0 5px #fb7185)" };
+  if (cat === "apartments" || cat === "residential") return { text: "text-indigo-400", bg: "bg-indigo-500/20", border: "border-indigo-500/30", shadow: "shadow-[0_0_5px_rgba(129,140,248,0.8)]", hex: "#818cf8", hexShadow: "drop-shadow(0 0 5px #818cf8)" };
+  // default / ev_station
+  return { text: "text-green-400", bg: "bg-green-500/20", border: "border-green-500/30", shadow: "shadow-[0_0_5px_rgba(34,197,94,0.8)]", hex: "#4ade80", hexShadow: "drop-shadow(0 0 5px #4ade80)" };
+};
+
+const LandmarkMarker = ({ st, onFlyTo, onExpand }: { st: any, onFlyTo: (st: any) => void, onExpand: (st: any) => void }) => {
+  const { camera } = useThree();
+  const colorObj = getCategoryColor(st.category);
+  
+  const handleClick = (e: any) => {
+    e.stopPropagation();
+    const stPos = new THREE.Vector3(st.center[0], 0, st.center[1]);
+    const targetCamPos = new THREE.Vector3(stPos.x, 200, stPos.z + 300);
+    const dist = camera.position.distanceTo(targetCamPos);
+    
+    if (dist > 80) {
+      onFlyTo(st);
+    } else {
+      onExpand(st);
+    }
+  };
+
+  return (
+    <Html position={[0, 45, 0]} center zIndexRange={[100, 0]}>
+      <div className="flex flex-col items-center">
+        <div 
+          onClick={handleClick}
+          className="bg-black/30 backdrop-blur-sm border border-white/20 p-1 px-2 rounded cursor-pointer pointer-events-auto hover:bg-black/50 transition-all text-white min-w-[70px] text-center shadow-xl group"
+          title={st.name}
+        >
+          <div className="flex items-center justify-center gap-1 mb-0.5">
+             <Building2 size={8} className={`${colorObj.text} drop-shadow-[0_0_5px_rgba(0,0,0,0.5)]`} />
+             <div className="text-[10px] font-bold whitespace-nowrap">{st.name}</div>
+          </div>
+          <div className={`text-[7px] ${colorObj.text} uppercase tracking-widest font-semibold`}>{st.category.replace('_', ' ')}</div>
+        </div>
+        <div className="w-[2px] h-20 mt-0.5" style={{ background: `linear-gradient(to bottom, ${colorObj.hex}cc, transparent)`, filter: colorObj.hexShadow }}></div>
+      </div>
+    </Html>
+  );
+};
+
+// Power grid category colors
+const getPowerGridColor = (cat: string) => {
+  if (cat === 'main_power_grid') return {
+    text: 'text-red-400', bg: 'bg-red-500/20', border: 'border-red-500/30',
+    shadow: 'shadow-[0_0_5px_rgba(239,68,68,0.8)]', hex: '#ef4444', hexShadow: 'drop-shadow(0 0 6px #ef4444)'
+  };
+  // ev_substation
+  return {
+    text: 'text-yellow-400', bg: 'bg-yellow-500/20', border: 'border-yellow-500/30',
+    shadow: 'shadow-[0_0_5px_rgba(234,179,8,0.8)]', hex: '#eab308', hexShadow: 'drop-shadow(0 0 6px #eab308)'
+  };
+};
+
+// Reuses exact same visual style as LandmarkMarker but with power grid icon/colors
+const PowerGridMarker = ({ node, onFlyTo, onExpand }: { node: any, onFlyTo: (n: any) => void, onExpand: (n: any) => void }) => {
+  const { camera } = useThree();
+  const colorObj = getPowerGridColor(node.category);
+  const isHub = node.category === 'main_power_grid';
+  const Icon = isHub ? Zap : Radio;
+
+  const handleClick = (e: any) => {
+    e.stopPropagation();
+    const stPos = new THREE.Vector3(node.center[0], 0, node.center[1]);
+    const targetCamPos = new THREE.Vector3(stPos.x, 200, stPos.z + 300);
+    const dist = camera.position.distanceTo(targetCamPos);
+    if (dist > 80) {
+      onFlyTo(node);
+    } else {
+      onExpand(node);
+    }
+  };
+
+  const labelText = isHub ? 'Main Power Grid' : 'EV Sub-Station';
+
+  return (
+    <Html position={[0, isHub ? 80 : 60, 0]} center zIndexRange={[200, 0]}>
+      <div className="flex flex-col items-center">
+        <div
+          onClick={handleClick}
+          className={`bg-black/40 backdrop-blur-sm border ${colorObj.border} p-1 px-2 rounded cursor-pointer pointer-events-auto hover:bg-black/60 transition-all text-white min-w-[80px] text-center shadow-xl ${colorObj.shadow}`}
+          title={node.name}
+        >
+          <div className="flex items-center justify-center gap-1 mb-0.5">
+            <Icon size={8} className={colorObj.text} />
+            <div className="text-[10px] font-bold whitespace-nowrap">{node.name}</div>
+          </div>
+          <div className={`text-[7px] ${colorObj.text} uppercase tracking-widest font-semibold`}>{labelText}</div>
+        </div>
+        <div className="w-[2px] mt-0.5" style={{ height: isHub ? '100px' : '80px', background: `linear-gradient(to bottom, ${colorObj.hex}ee, transparent)`, filter: colorObj.hexShadow }}></div>
+      </div>
+    </Html>
+  );
+};
+
+// Expanded panel for power grid nodes (Hub / Sub-Station)
+const PowerGridExpandedPanel = ({ node, onClose }: { node: any, onClose: () => void }) => {
+  if (!node) return null;
+  const colorObj = getPowerGridColor(node.category);
+  const isHub = node.category === 'main_power_grid';
+  const Icon = isHub ? Zap : Radio;
+  const d = node.details;
+
+  return (
+    <div className="absolute inset-0 flex items-center justify-center pointer-events-auto z-[9999] bg-black/40 backdrop-blur-sm">
+      <div className="w-[480px] bg-gray-900/90 backdrop-blur-lg border border-white/20 rounded-2xl p-8 text-white shadow-2xl pointer-events-auto relative">
+        {/* Header */}
+        <div className={`flex items-center gap-4 mb-6 border-b border-white/10 pb-6`}>
+          <div className={`w-16 h-16 rounded-xl ${colorObj.bg} ${colorObj.text} border ${colorObj.border} flex items-center justify-center ${colorObj.shadow}`}>
+            <Icon size={32} />
+          </div>
+          <div>
+            <h3 className="font-bold text-2xl leading-tight">{node.name}</h3>
+            <p className={`text-sm ${colorObj.text} uppercase tracking-wider mt-1`}>{isHub ? 'Main Power Grid Hub' : 'EV Sub-Station'}</p>
+          </div>
+        </div>
+
+        {/* Status */}
+        <div className="bg-white/5 p-4 rounded-xl border border-white/10 mb-4">
+          <div className="text-xs text-gray-400 uppercase tracking-widest mb-1.5">Status</div>
+          <div className="flex items-center gap-2">
+            <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
+            <span className="text-base font-semibold text-green-400">{d.status} — BESCOM Grid Live</span>
+          </div>
+        </div>
+
+        {/* Grid data */}
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+            <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Voltage</div>
+            <div className={`text-lg font-bold ${colorObj.text}`}>{d.voltage}</div>
+          </div>
+          <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+            <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Capacity</div>
+            <div className={`text-lg font-bold ${colorObj.text}`}>{d.capacity}</div>
+          </div>
+          <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+            <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Load Factor</div>
+            <div className="text-lg font-bold text-white">{d.loadFactor}</div>
+          </div>
+          <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+            <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">
+              {isHub ? 'Connected Sub-Stations' : 'Connected EV Stations'}
+            </div>
+            <div className="text-lg font-bold text-white">
+              {isHub ? d.connectedSubstations : d.connectedEVStations}
+            </div>
+          </div>
+          {isHub && (
+            <>
+              <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Feeder Lines</div>
+                <div className="text-lg font-bold text-white">{d.feederLines}</div>
+              </div>
+              <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Peak Demand</div>
+                <div className="text-lg font-bold text-white">{d.peakDemand}</div>
+              </div>
+            </>
+          )}
+          {!isHub && (
+            <>
+              <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Feeder ID</div>
+                <div className="text-lg font-bold text-white">{d.feederID}</div>
+              </div>
+              <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Max Current</div>
+                <div className="text-lg font-bold text-white">{d.maxCurrent}</div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Transformer / Operator */}
+        <div className="bg-white/5 p-3 rounded-xl border border-white/10 mb-6">
+          <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Transformer Rating</div>
+          <div className="text-sm font-medium">{d.transformerRating}</div>
+          <div className="text-xs text-gray-400 mt-1">{d.operator || 'BESCOM'}</div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors text-sm font-bold tracking-wider border border-white/20"
+        >
+          CLOSE
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// Animated electricity flow along a curve
+const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: THREE.Vector3[], color: string, particleColor: string, isHub: boolean }) => {
+  const particleRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const PARTICLE_COUNT = 18;
+  const offsets = useMemo(() => Array.from({ length: PARTICLE_COUNT }, (_, i) => i / PARTICLE_COUNT), []);
+  const progressRef = useRef<Float32Array>(new Float32Array(PARTICLE_COUNT).map((_, i) => i / PARTICLE_COUNT));
+  const tubeRef = useRef<THREE.Mesh>(null);
+
+  const curve = useMemo(() => {
+    if (points.length < 2) return null;
+    
+    // Create a Manhattan (L-shaped) path at ground level
+    // This gives a "linear level along the roads" look
+    const pt1 = new THREE.Vector3(points[0].x, 1.5, points[0].z);
+    const pt2 = new THREE.Vector3(points[0].x, 1.5, points[points.length - 1].z);
+    const pt3 = new THREE.Vector3(points[points.length - 1].x, 1.5, points[points.length - 1].z);
+    
+    const pathPoints = [pt1, pt2, pt3];
+    return new THREE.CatmullRomCurve3(pathPoints, false, 'catmullrom', 0.05); // low tension for straight lines
+  }, [points, isHub]);
+
+  const tubeGeo = useMemo(() => {
+    if (!curve) return null;
+    return new THREE.TubeGeometry(curve, 40, isHub ? 1.8 : 1.0, 8, false);
+  }, [curve, isHub]);
+
+  useFrame((_, delta) => {
+    if (!curve) return;
+    const speed = isHub ? 0.18 : 0.28;
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      progressRef.current[i] = (progressRef.current[i] + speed * delta) % 1.0;
+      const mesh = particleRefs.current[i];
+      if (mesh) {
+        const pt = curve.getPointAt(progressRef.current[i]);
+        mesh.position.copy(pt);
+      }
+    }
+  });
+
+  if (!curve || !tubeGeo) return null;
+
+  return (
+    <group>
+      {/* Glowing pipe */}
+      <mesh ref={tubeRef} geometry={tubeGeo}>
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={isHub ? 2.5 : 1.8}
+          transparent
+          opacity={isHub ? 0.55 : 0.45}
+          depthWrite={false}
+          depthTest={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      {/* Flowing electricity particles */}
+      {offsets.map((_, i) => (
+        <mesh
+          key={i}
+          ref={el => { particleRefs.current[i] = el; }}
+        >
+          <sphereGeometry args={[isHub ? 2.5 : 1.8, 6, 6]} />
+          <meshStandardMaterial
+            color={particleColor}
+            emissive={particleColor}
+            emissiveIntensity={isHub ? 12 : 8}
+            transparent
+            opacity={0.9}
+            depthWrite={false}
+            depthTest={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+};
+
+// Full EV Simulation overlay layer
+const EVSimulationLayer = ({ evStations, buildings, onFlyTo, onExpand, focusedNode }: {
+  evStations: any[],
+  buildings: any[],
+  onFlyTo: (n: any) => void,
+  onExpand: (n: any) => void,
+  focusedNode: any,
+}) => {
+
+  // Trigger wide view zoom on mount (once)
+  useEffect(() => {
+    onFlyTo({ center: [0, 0], y: 2500 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Use static buildings for the Hub and sub-stations
+  const { hub, substations, evToSubMap } = useMemo(() => {
+    if (!buildings || buildings.length === 0 || evStations.length === 0) {
+      return { hub: null, substations: [], evToSubMap: {} };
+    }
+
+    const validBuildings = buildings.filter(b => b.height > 10 && b.name && b.center);
+    if (validBuildings.length === 0) return { hub: null, substations: [], evToSubMap: {} };
+
+    // Pick deterministic buildings
+    const hubBuilding = validBuildings[Math.min(50, validBuildings.length - 1)];
+    const hubNode = {
+      ...POWER_GRID_HUB,
+      center: hubBuilding.center as [number, number],
+      height: hubBuilding.height,
+    };
+
+    const chosenSubs = [
+      validBuildings[Math.min(100, validBuildings.length - 1)],
+      validBuildings[Math.min(250, validBuildings.length - 1)],
+      validBuildings[Math.min(400, validBuildings.length - 1)]
+    ].filter((b, i, a) => b && b.id !== hubBuilding.id && a.findIndex(x => x.id === b.id) === i);
+
+    // Fill to 3 if needed
+    let idx = 0;
+    while (chosenSubs.length < 3 && idx < validBuildings.length) {
+      const b = validBuildings[idx++];
+      if (b.id !== hubBuilding.id && !chosenSubs.find(s => s.id === b.id)) {
+        chosenSubs.push(b);
+      }
+    }
+
+    const subNodes = POWER_SUBSTATIONS.slice(0, chosenSubs.length).map((sub, i) => ({
+      ...sub,
+      center: chosenSubs[i].center as [number, number],
+      height: chosenSubs[i].height,
+    }));
+
+    // Assign each EV station to its closest sub-station
+    const evToSubMap: Record<string, number> = {};
+    evStations.forEach(ev => {
+      let closestIdx = 0;
+      let closestDist = Infinity;
+      subNodes.forEach((sub, i) => {
+        const dx = ev.center[0] - sub.center[0];
+        const dz = ev.center[1] - sub.center[1];
+        const dist = Math.sqrt(dx*dx + dz*dz);
+        if (dist < closestDist) { closestDist = dist; closestIdx = i; }
+      });
+      evToSubMap[ev.id] = closestIdx;
+    });
+
+    return { hub: hubNode, substations: subNodes, evToSubMap };
+  }, [buildings, evStations]);
+
+  if (!hub) return null;
+
+  const hubPos = new THREE.Vector3(hub.center[0], 12, hub.center[1]);
+
+  return (
+    <group>
+      {/* Hub glow pillar */}
+      <mesh position={[hub.center[0], 50, hub.center[1]]}>
+        <cylinderGeometry args={[2, 2, 100, 8]} />
+        <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={3} transparent opacity={0.25} blending={THREE.AdditiveBlending} depthWrite={false} />
+      </mesh>
+
+      {/* Hub marker */}
+      <group position={[hub.center[0], 0, hub.center[1]]}>
+        {focusedNode?.id === hub.id && (
+          <mesh position={[0, (hub.height || 30) / 2, 0]}>
+            <boxGeometry args={[50, (hub.height || 30) + 15, 50]} />
+            <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={2} wireframe transparent opacity={0.5} />
+          </mesh>
+        )}
+        <PowerGridMarker node={hub} onFlyTo={onFlyTo} onExpand={onExpand} />
+      </group>
+
+      {/* Hub → Sub-Station pipelines */}
+      {substations.map((sub) => (
+        <ElectricityPipeline
+          key={`hub-${sub.id}`}
+          points={[hubPos, new THREE.Vector3(sub.center[0], 12, sub.center[1])]}
+          color="#ef4444"
+          particleColor="#fca5a5"
+          isHub={true}
+        />
+      ))}
+
+      {/* Sub-stations */}
+      {substations.map((sub, subIdx) => {
+        const subPos = new THREE.Vector3(sub.center[0], 12, sub.center[1]);
+        const myEVStations = evStations.filter(ev => evToSubMap[ev.id] === subIdx);
+        const colorObj = getPowerGridColor(sub.category);
+
+        return (
+          <group key={sub.id}>
+            {/* Sub-station glow pillar */}
+            <mesh position={[sub.center[0], 35, sub.center[1]]}>
+              <cylinderGeometry args={[1.2, 1.2, 70, 8]} />
+              <meshStandardMaterial color={colorObj.hex} emissive={colorObj.hex} emissiveIntensity={2.5} transparent opacity={0.22} blending={THREE.AdditiveBlending} depthWrite={false} />
+            </mesh>
+
+            {/* Sub-station marker */}
+            <group position={[sub.center[0], 0, sub.center[1]]}>
+              {focusedNode?.id === sub.id && (
+                <mesh position={[0, (sub.height || 20) / 2, 0]}>
+                  <boxGeometry args={[40, (sub.height || 20) + 12, 40]} />
+                  <meshStandardMaterial color={colorObj.hex} emissive={colorObj.hex} emissiveIntensity={2} wireframe transparent opacity={0.5} />
+                </mesh>
+              )}
+              <PowerGridMarker node={sub} onFlyTo={onFlyTo} onExpand={onExpand} />
+            </group>
+
+            {/* Sub-Station → EV Station pipelines */}
+            {myEVStations.map(ev => (
+              <ElectricityPipeline
+                key={`sub-${sub.id}-ev-${ev.id}`}
+                points={[subPos, new THREE.Vector3(ev.center[0], 2, ev.center[1])]}
+                color="#eab308"
+                particleColor="#fde047"
+                isHub={false}
+              />
+            ))}
+          </group>
+        );
+      })}
+    </group>
+  );
+};
+
+const EVStationsLayer = ({ stations, onFlyTo, onExpand, focusedLandmark, assetFilters }: { stations: any[], onFlyTo: (st: any) => void, onExpand: (st: any) => void, focusedLandmark: any, assetFilters?: any }) => {
+  const visibleStations = useMemo(() => {
+    if (!assetFilters || assetFilters.all || assetFilters.evStations) return stations;
+    return [];
+  }, [stations, assetFilters]);
+
+  if (!visibleStations || visibleStations.length === 0) return null;
   
   return (
     <group>
-      {stations.map(st => {
+      {visibleStations.map(st => {
         const numChargers = Math.max(1, st.connections.length);
         const spacing = 3;
         const startX = -((numChargers - 1) * spacing) / 2;
+        const isFocused = focusedLandmark?.id === st.id;
         
         return (
           <group key={st.id} position={[st.center[0], 0, st.center[1]]}>
             {/* Holographic Glowing Pillar for visibility from afar */}
-            <mesh position={[0, 20, 0]}>
-              <cylinderGeometry args={[0.5, 0.5, 40, 8]} />
-              <meshStandardMaterial color="#22c55e" emissive="#22c55e" emissiveIntensity={2} transparent opacity={0.3} blending={THREE.AdditiveBlending} depthWrite={false} />
+            <mesh position={[0, isFocused ? 30 : 20, 0]}>
+              <cylinderGeometry args={[isFocused ? 1.5 : 0.5, isFocused ? 1.5 : 0.5, isFocused ? 60 : 40, 8]} />
+              <meshStandardMaterial color="#22c55e" emissive="#22c55e" emissiveIntensity={isFocused ? 5 : 2} transparent opacity={isFocused ? 0.6 : 0.3} blending={THREE.AdditiveBlending} depthWrite={false} />
             </mesh>
+            {isFocused && (
+              <mesh position={[0, 15, 0]}>
+                <boxGeometry args={[40, 50, 40]} />
+                <meshStandardMaterial color="#22c55e" emissive="#22c55e" emissiveIntensity={2} wireframe transparent opacity={0.6} />
+              </mesh>
+            )}
             
             {/* Mathematically exact number of charging pedestals based on API data */}
             {Array.from({ length: numChargers }).map((_, i) => (
@@ -357,16 +941,8 @@ const EVStationsLayer = ({ stations, onSelect }: { stations: any[], onSelect: (s
               </group>
             ))}
 
-            {/* Interactive Floating Dot */}
-            <Html position={[0, 32, 0]} center zIndexRange={[100, 0]}>
-              <div 
-                onClick={(e) => { e.stopPropagation(); onSelect(st); }}
-                className="w-4 h-4 bg-green-500 rounded-full cursor-pointer hover:scale-150 transition-transform animate-pulse border-2 border-white shadow-[0_0_20px_#22c55e]"
-                title={st.name}
-              >
-                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 text-[10px] font-bold text-green-400 bg-black/60 px-1 rounded whitespace-nowrap pointer-events-none">EV</div>
-              </div>
-            </Html>
+            {/* Interactive Floating Box */}
+            <LandmarkMarker st={st} onFlyTo={onFlyTo} onExpand={onExpand} />
           </group>
         );
       })}
@@ -449,26 +1025,36 @@ const LakesLayer = ({ lakes }: { lakes: any[] }) => {
   );
 };
 
-const getCategoryColor = (cat: string) => {
-  if (cat === "mall" || cat === "commercial") return "bg-cyan-400 shadow-[0_0_15px_#22d3ee]";
-  if (cat === "hospital") return "bg-red-500 shadow-[0_0_15px_#ef4444]";
-  if (cat === "restaurant" || cat === "cafe" || cat === "fast_food") return "bg-rose-400 shadow-[0_0_15px_#fb7185]";
-  return "bg-indigo-400 shadow-[0_0_15px_#818cf8]"; // apartments
-};
-
-const LandmarksLayer = ({ buildings, onSelect }: { buildings: any[], onSelect: (b: any) => void }) => {
-  const landmarks = useMemo(() => buildings.filter(b => b.name && (b.category === "mall" || b.category === "hospital" || b.category === "apartments" || b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food")), [buildings]);
+const LandmarksLayer = ({ buildings, onFlyTo, onExpand, focusedLandmark, assetFilters }: { buildings: any[], onFlyTo: (b: any) => void, onExpand: (b: any) => void, focusedLandmark: any, assetFilters?: any }) => {
+  const landmarks = useMemo(() => buildings.filter(b => {
+    if (!b.name) return false;
+    
+    const isKnown = (b.category === "mall" || b.category === "hospital" || b.category === "apartments" || b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food");
+    if (!assetFilters || assetFilters.all) return isKnown;
+    
+    if (assetFilters.apartments && (b.category === "apartments" || b.category === "residential")) return true;
+    if (assetFilters.hospital && b.category === "hospital") return true;
+    if (assetFilters.restaurants && (b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food")) return true;
+    
+    return false;
+  }), [buildings, assetFilters]);
   return (
     <group>
-      {landmarks.map(b => (
-        <Html key={b.id} position={[b.center[0], b.height + 5, b.center[1]]} center distanceFactor={800} zIndexRange={[100, 0]}>
-          <div 
-            onClick={(e) => { e.stopPropagation(); onSelect(b); }}
-            className={`w-3 h-3 ${getCategoryColor(b.category)} rounded-full cursor-pointer hover:scale-150 transition-transform animate-pulse border border-white/50`}
-            title={b.name}
-          ></div>
-        </Html>
-      ))}
+      {landmarks.map(b => {
+        const isFocused = focusedLandmark?.id === b.id;
+        const colorObj = getCategoryColor(b.category);
+        return (
+          <group key={b.id} position={[b.center[0], 0, b.center[1]]}>
+            {isFocused && (
+              <mesh position={[0, b.height / 2, 0]}>
+                <boxGeometry args={[40, b.height + 10, 40]} />
+                <meshStandardMaterial color={colorObj.hex} emissive={colorObj.hex} emissiveIntensity={2} wireframe transparent opacity={0.6} />
+              </mesh>
+            )}
+            <LandmarkMarker st={b} onFlyTo={onFlyTo} onExpand={onExpand} />
+          </group>
+        );
+      })}
     </group>
   );
 };
@@ -587,9 +1173,10 @@ const DenseForest = ({ lakes }: { lakes?: any[] }) => {
   );
 };
 
-const StreetlightsLayer = ({ roads }: { roads: any[] }) => {
+const StreetlightsLayer = ({ roads, isNight }: { roads: any[], isNight: boolean }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const poleRef = useRef<THREE.InstancedMesh>(null);
+  const glowRef = useRef<THREE.InstancedMesh>(null);
   
   const points = useMemo(() => {
     const arr: THREE.Vector3[] = [];
@@ -604,7 +1191,7 @@ const StreetlightsLayer = ({ roads }: { roads: any[] }) => {
       // Light every 25 meters for major, 60 meters for minor
       const spacing = isMajor ? 25 : 60;
       const count = Math.floor(path.getLength() / spacing); 
-      if (count === 0) return; // Fix division by zero for short roads
+      if (count === 0) return;
       for(let i = 0; i <= count; i++) {
         const t = count === 0 ? 0 : (i / count);
         const pt = path.getPointAt(t);
@@ -627,23 +1214,37 @@ const StreetlightsLayer = ({ roads }: { roads: any[] }) => {
         dummy.position.y = 5; // Bulb height
         dummy.updateMatrix();
         meshRef.current!.setMatrixAt(i, dummy.matrix);
-        
+        if (glowRef.current) {
+          dummy.position.y = 5;
+          dummy.scale.setScalar(isNight ? 1 : 0.001); // hide glow during day
+          dummy.updateMatrix();
+          glowRef.current!.setMatrixAt(i, dummy.matrix);
+          dummy.scale.setScalar(1);
+        }
         dummy.position.y = 2.5; // Pole center
         dummy.updateMatrix();
         poleRef.current!.setMatrixAt(i, dummy.matrix);
       });
       meshRef.current.instanceMatrix.needsUpdate = true;
       poleRef.current.instanceMatrix.needsUpdate = true;
+      if (glowRef.current) glowRef.current.instanceMatrix.needsUpdate = true;
     }
-  }, [points]);
+  }, [points, isNight]);
 
   if (points.length === 0) return null;
   return (
     <group>
+      {/* Bulb */}
       <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, points.length]}>
         <sphereGeometry args={[0.7, 8, 8]} />
-        <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={10} toneMapped={false} />
+        <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={isNight ? 20 : 3} toneMapped={false} />
       </instancedMesh>
+      {/* Glow halo at night */}
+      <instancedMesh ref={glowRef} args={[undefined as any, undefined as any, points.length]}>
+        <sphereGeometry args={[4, 8, 8]} />
+        <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={2} transparent opacity={0.12} depthWrite={false} blending={THREE.AdditiveBlending} />
+      </instancedMesh>
+      {/* Pole */}
       <instancedMesh ref={poleRef} args={[undefined as any, undefined as any, points.length]}>
         <cylinderGeometry args={[0.15, 0.15, 5, 4]} />
         <meshStandardMaterial color="#475569" metalness={0.8} roughness={0.2} />
@@ -712,7 +1313,7 @@ const Flight = ({ data }: { data: any }) => {
   const groupRef = useRef<THREE.Group>(null);
   const posRef = useRef(new THREE.Vector3(...data.position));
 
-  useFrame((state, delta) => {
+  useFrame((_, delta) => {
     if (!groupRef.current) return;
     const rad = THREE.MathUtils.degToRad(data.heading);
     const vx = Math.sin(rad) * data.velocity * 0.1 * delta;
@@ -732,8 +1333,8 @@ const Flight = ({ data }: { data: any }) => {
         </div>
       </Html>
       <group rotation={[0, -THREE.MathUtils.degToRad(data.heading), 0]}>
-        <mesh>
-          <cylinderGeometry args={[2, 2, 16, 8]} rotation={[Math.PI/2, 0, 0]} />
+        <mesh rotation={[Math.PI/2, 0, 0]}>
+          <cylinderGeometry args={[2, 2, 16, 8]} />
           <meshStandardMaterial color="#ffffff" />
         </mesh>
         <mesh position={[0, 0, -2]}>
@@ -770,44 +1371,59 @@ const FlightEngine = () => {
 // CINEMATIC DRIVING ENGINES (PROJECT NOLAN-STAR)
 // ==========================================
 
-const CinematicRain = ({ active }: { active: boolean }) => {
-  const count = 20000;
-  const positions = useMemo(() => {
-    const pos = new Float32Array(count * 3);
-    for(let i=0; i<count; i++) {
-      pos[i*3] = (Math.random() - 0.5) * 2000;
-      pos[i*3+1] = Math.random() * 800;
-      pos[i*3+2] = (Math.random() - 0.5) * 2000;
-    }
-    return pos;
+const CinematicRain = ({ active, intensity = 5 }: { active: boolean, intensity?: number }) => {
+  const count = active ? Math.min(10000, Math.floor(intensity * 600)) : 0;
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const progressRef = useRef<Float32Array>(new Float32Array(10000).map(() => Math.random()));
+  
+  const basePositions = useMemo(() => {
+    return Array.from({ length: 10000 }, () => ({
+      ox: (Math.random() - 0.5) * 1200,
+      oz: (Math.random() - 0.5) * 1200,
+      speed: 180 + Math.random() * 120,
+      height: 300 + Math.random() * 200,
+    }));
   }, []);
-  
-  const pointsRef = useRef<THREE.Points>(null);
+
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
   useFrame((state, delta) => {
-    if(!active || !pointsRef.current) return;
-    const pos = pointsRef.current.geometry.attributes.position.array as Float32Array;
-    const camPos = state.camera.position;
-    for(let i=0; i<count; i++) {
-      pos[i*3+1] -= 400 * delta; // heavy falling speed
-      if (pos[i*3+1] < 0) pos[i*3+1] = 800;
-      
-      // wrap X and Z around camera to make it infinite
-      if (pos[i*3] < camPos.x - 1000) pos[i*3] += 2000;
-      if (pos[i*3] > camPos.x + 1000) pos[i*3] -= 2000;
-      if (pos[i*3+2] < camPos.z - 1000) pos[i*3+2] += 2000;
-      if (pos[i*3+2] > camPos.z + 1000) pos[i*3+2] -= 2000;
+    if (!active || !meshRef.current) return;
+    const camX = state.camera.position.x;
+    const camZ = state.camera.position.z;
+
+    for (let i = 0; i < count; i++) {
+      const b = basePositions[i];
+      progressRef.current[i] += b.speed * delta;
+      if (progressRef.current[i] > b.height) progressRef.current[i] = 0;
+
+      const y = b.height - progressRef.current[i];
+      const x = camX + b.ox;
+      const z = camZ + b.oz;
+
+      dummy.position.set(x, y, z);
+      dummy.scale.set(0.06, 2.5 + Math.random() * 0.5, 0.06);
+      dummy.updateMatrix();
+      meshRef.current.setMatrixAt(i, dummy.matrix);
     }
-    pointsRef.current.geometry.attributes.position.needsUpdate = true;
+    meshRef.current.instanceMatrix.needsUpdate = true;
   });
-  
+
   if (!active) return null;
   return (
-    <points ref={pointsRef}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
-      </bufferGeometry>
-      <pointsMaterial color="#88ccff" size={1.5} transparent opacity={0.3} blending={THREE.AdditiveBlending} depthWrite={false} />
-    </points>
+    <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, count]}>
+      <cylinderGeometry args={[1, 1, 1, 3]} />
+      <meshStandardMaterial
+        color="#a5d8f7"
+        emissive="#a5d8f7"
+        emissiveIntensity={1.5}
+        transparent
+        opacity={0.55}
+        depthWrite={false}
+        depthTest={false}
+        blending={THREE.AdditiveBlending}
+      />
+    </instancedMesh>
   );
 };
 
@@ -1114,88 +1730,143 @@ const LiveMinimap = ({ roads, telemetryRef }: { roads: any[], telemetryRef: any 
 // ==========================================
 // MAIN SCENE
 // ==========================================
-const LandmarkInfoPanel = ({ landmark, onClose, onStartDriving }: { landmark: any, onClose: () => void, onStartDriving: () => void }) => {
+const ExpandedLandmarkPanel = ({ landmark, onClose, onStartDriving }: { landmark: any, onClose: () => void, onStartDriving: () => void }) => {
   if (!landmark) return null;
+  const colorObj = getCategoryColor(landmark.category);
   return (
-    <div className="absolute right-6 top-24 w-80 bg-black/70 backdrop-blur-xl border border-white/10 rounded-lg p-6 text-white shadow-2xl z-50 animate-in slide-in-from-right-8 duration-300">
-      <div className="flex items-center gap-3 mb-4 border-b border-white/10 pb-4">
-        <div className={`w-12 h-12 rounded-lg ${
-          landmark.category === "ev_station" ? "bg-green-500/20 text-green-400 border border-green-500/30" : 
-          "bg-indigo-500/20 text-indigo-400 border border-indigo-500/30"
-        } flex items-center justify-center`}>
-          <Building2 size={24} />
-        </div>
-        <div>
-          <h3 className="font-bold text-lg leading-tight">{landmark.name}</h3>
-          <p className="text-xs text-gray-400 uppercase tracking-wider">{landmark.category.replace('_', ' ')}</p>
-        </div>
-      </div>
-      
-      <div className="space-y-3">
-        <div className="bg-white/5 p-3 rounded-lg border border-white/5">
-          <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Status</div>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_5px_rgba(34,197,94,0.5)]"></div>
-            <span className="text-sm font-semibold text-green-400">Live API Link Active</span>
+    <div className="absolute inset-0 flex items-center justify-center pointer-events-auto z-[9999] bg-black/40 backdrop-blur-sm">
+      <div className="w-[450px] bg-gray/75 backdrop-blur-lg border border-white/20 rounded-2xl p-8 text-white shadow-2xl pointer-events-auto animate-in zoom-in-95 duration-300 relative">
+        <div className="flex items-center gap-4 mb-6 border-b border-white/10 pb-6">
+          <div className={`w-16 h-16 rounded-xl ${colorObj.bg} ${colorObj.text} border ${colorObj.border} flex items-center justify-center ${colorObj.shadow}`}>
+            <Building2 size={32} />
+          </div>
+          <div>
+            <h3 className="font-bold text-2xl leading-tight">{landmark.name}</h3>
+            <p className={`text-sm ${colorObj.text} uppercase tracking-wider mt-1`}>{landmark.category.replace('_', ' ')}</p>
           </div>
         </div>
         
-        {landmark.category === "ev_station" && (
-          <>
-            <div className="bg-white/5 p-3 rounded-lg border border-white/5">
-              <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Operator & Address</div>
-              <div className="text-sm font-medium">{landmark.operator}</div>
-              <div className="text-xs text-gray-300 mt-1">{landmark.address}</div>
+        <div className="space-y-4">
+          <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+            <div className="text-xs text-gray-400 uppercase tracking-widest mb-1.5">Status</div>
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
+              <span className="text-base font-semibold text-green-400">Live API Link Active</span>
             </div>
-            
-            <div className="bg-white/5 p-3 rounded-lg border border-white/5">
-              <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Available Connections</div>
-              <div className="space-y-1">
+          </div>
+          
+          {(landmark.operator || landmark.address) && (
+            <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+              <div className="text-xs text-gray-400 uppercase tracking-widest mb-1.5">Operator & Address</div>
+              {landmark.operator && <div className="text-base font-medium">{landmark.operator}</div>}
+              {landmark.address && <div className="text-sm text-gray-300 mt-1">{landmark.address}</div>}
+            </div>
+          )}
+          
+          {landmark.connections && (
+            <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+              <div className="text-xs text-gray-400 uppercase tracking-widest mb-2">Available Connections</div>
+              <div className="space-y-2">
                 {landmark.connections.map((c: string, idx: number) => (
-                  <div key={idx} className="text-xs text-green-300 flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 bg-green-400 rounded-full"></div>
+                  <div key={idx} className="text-sm text-green-300 flex items-center gap-3 bg-green-500/10 p-2 rounded border border-green-500/20">
+                    <div className="w-2 h-2 bg-green-400 rounded-full shadow-[0_0_5px_rgba(34,197,94,0.8)]"></div>
                     {c}
                   </div>
                 ))}
               </div>
             </div>
-          </>
-        )}
-        
-        {landmark.category !== "ev_station" && (
-          <div className="bg-white/5 p-3 rounded-lg border border-white/5">
-            <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Coordinates (X, Z)</div>
-            <div className="text-sm font-mono text-cyan-400">{Math.round(landmark.center[0])}, {Math.round(landmark.center[1])}</div>
-          </div>
-        )}
-      </div> 
-      <div className="mt-4 flex gap-2">
-        <button 
-          onClick={onStartDriving}
-          className="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded transition-colors text-xs tracking-widest uppercase shadow-[0_0_15px_rgba(220,38,38,0.5)] border border-red-500"
-        >
-          START DRIVING HERE
-        </button>
-        <button 
-          onClick={onClose}
-          className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded transition-colors text-xs font-bold tracking-wider"
-        >
-          CLOSE
-        </button>
+          )}
+          
+          {!landmark.connections && (
+             <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+               <div className="text-xs text-gray-400 uppercase tracking-widest mb-1.5">Coordinates (X, Z)</div>
+               <div className="text-base font-mono text-cyan-400">{Math.round(landmark.center[0])}, {Math.round(landmark.center[1])}</div>
+             </div>
+          )}
+        </div> 
+
+        <div className="mt-8 flex gap-4">
+          <button 
+            onClick={onStartDriving}
+            className="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-lg transition-colors text-sm tracking-widest uppercase shadow-[0_0_20px_rgba(220,38,38,0.5)] border border-red-500"
+          >
+            START DRIVING HERE
+          </button>
+          <button 
+            onClick={onClose}
+            className="px-8 py-3 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors text-sm font-bold tracking-wider border border-white/20"
+          >
+            CLOSE
+          </button>
+        </div>
       </div>
     </div>
   );
 };
 
-export const CityStreetViewer = () => {
+export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { isShowFlights?: boolean, rainIntensity?: number }) => {
   const [cityData, setCityData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [evStations, setEvStations] = useState<any[]>([]);
-  const [isNight, setIsNight] = useState(false);
-  const [isRain, setIsRain] = useState(false);
+  const [isSimNight, setIsSimNight] = useState(false);
+  const [isSimRain, setIsSimRain] = useState(false);
   const [weather, setWeather] = useState<any>(null);
-  const [selectedLandmark, setSelectedLandmark] = useState<any>(null);
+
+  const isLiveNight = weather ? !weather.is_day : false;
+  const isLiveRain = weather ? weather.weather_code >= 61 : false;
+  const [assetFilters, setAssetFilters] = useState<any>({ all: true });
+  const [cameraTarget, setCameraTarget] = useState<THREE.Vector3 | null>(null);
+  const [focusedLandmark, setFocusedLandmark] = useState<any>(null);
+  const [expandedLandmark, setExpandedLandmark] = useState<any>(null);
   const [isDriveMode, setIsDriveMode] = useState(false);
+  // EV Simulation state
+  const [isEvSim, setIsEvSim] = useState(false);
+  const [focusedGridNode, setFocusedGridNode] = useState<any>(null);
+  const [expandedGridNode, setExpandedGridNode] = useState<any>(null);
+
+  useEffect(() => {
+    const handleSim = (e: any) => {
+      if (e.detail.type === 'toggle-rain') setIsSimRain(prev => !prev);
+      if (e.detail.type === 'toggle-night') setIsSimNight(prev => !prev);
+    };
+    const handleFilter = (e: any) => setAssetFilters(e.detail);
+    const handleEvSim = (e: any) => {
+      if (e.detail.type === 'toggle-ev-sim') {
+        setIsEvSim(prev => !prev);
+        setFocusedGridNode(null);
+        setExpandedGridNode(null);
+      }
+    };
+
+    window.addEventListener('laip-sim', handleSim);
+    window.addEventListener('laip-asset-filter', handleFilter);
+    window.addEventListener('laip-ev-sim', handleEvSim);
+    return () => {
+      window.removeEventListener('laip-sim', handleSim);
+      window.removeEventListener('laip-asset-filter', handleFilter);
+      window.removeEventListener('laip-ev-sim', handleEvSim);
+    };
+  }, []);
+
+  // Broadcast weather state to App.tsx whenever it changes
+  useEffect(() => {
+    if (weather) {
+      window.dispatchEvent(new CustomEvent('laip-weather', {
+        detail: { weather }
+      }));
+    }
+  }, [weather]);
+
+  const handleFlyTo = (st: any) => {
+    const pos = new THREE.Vector3(st.center[0], 0, st.center[1]);
+    setCameraTarget(pos);
+    setExpandedLandmark(null);
+    setFocusedLandmark(st);
+  };
+
+  const handleExpand = (st: any) => {
+    setExpandedLandmark(st);
+  };
   const [speed, setSpeed] = useState(0);
   const [startPos, setStartPos] = useState<number[] | null>(null);
   const telemetryRef = useRef({ x: 0, z: 0, heading: 0, street: "" });
@@ -1219,12 +1890,30 @@ export const CityStreetViewer = () => {
       .then(data => {
         if (!data.error) {
           setWeather(data);
-          setIsNight(!data.is_day);
-          setIsRain(data.weather_code >= 61);
         }
       })
       .catch(e => console.error(e));
   }, []);
+
+  // Compute and dispatch asset counts when data loads
+  useEffect(() => {
+    if (!cityData?.buildings || evStations.length === 0) return;
+    
+    let apartments = 0;
+    let restaurants = 0;
+    let hospital = 0;
+
+    cityData.buildings.forEach((b: any) => {
+      if (!b.name) return;
+      if (b.category === "apartments" || b.category === "residential") apartments++;
+      if (b.category === "hospital") hospital++;
+      if (b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food") restaurants++;
+    });
+
+    window.dispatchEvent(new CustomEvent('laip-asset-counts', {
+      detail: { apartments, restaurants, hospital, evStations: evStations.length }
+    }));
+  }, [cityData, evStations]);
 
   // Global CSS override for full-screen Drive Mode
   useEffect(() => {
@@ -1237,8 +1926,12 @@ export const CityStreetViewer = () => {
   }, [isDriveMode]);
 
   // Force extreme cinematic conditions during GTA mode
-  const renderNight = isNight || isDriveMode;
-  const renderRain = isRain || isDriveMode;
+  const renderNight = isSimNight || isLiveNight;
+  const renderRain = isSimRain || isLiveRain || isDriveMode;
+
+  useEffect(() => {
+    buildingMaterial.userData.uIsNight.value = renderNight ? 1 : 0;
+  }, [renderNight]);
   
   // Adjust lighting for better cinematic visibility
   const sunPos = renderNight ? [-300, -100, -300] : [500, 300, -500]; // Keep sun below horizon at night for Sky
@@ -1249,14 +1942,8 @@ export const CityStreetViewer = () => {
 
   return (
     <div className="flex-1 relative w-full h-full" style={{ backgroundColor: skyColor }}>
-      <div className="absolute top-0 left-0 w-full p-6 z-10 pointer-events-none flex justify-between">
+      <div className="absolute top-2 left-0 w-full p-4 z-10 pointer-events-none flex justify-between">
         <div>
-          <div className="text-cyan-400 font-mono text-sm font-bold tracking-widest flex items-center gap-2">
-            LAIP <span className="text-xs opacity-50">v1.0.0</span>
-            <div className="ml-4 bg-white/10 backdrop-blur border border-white/20 px-3 py-1 rounded text-white text-xs">
-              ZEON HUB <span className="bg-cyan-400 text-black px-2 ml-2 rounded font-bold">CITY STREET</span>
-            </div>
-          </div>
           <div className="text-white/60 text-xs font-mono uppercase tracking-widest mt-1">
             JP Nagar Infrastructure Node
           </div>
@@ -1267,41 +1954,17 @@ export const CityStreetViewer = () => {
               Syncing Massive OSM Drone Data (May take 10s)...
             </div>
           )}
-
-          {weather && (
-            <div className="mt-4 flex gap-2">
-              <div className="bg-black/40 backdrop-blur border border-white/10 text-white text-xs px-3 py-2 rounded">
-                <div className="text-gray-400 text-[10px] uppercase">Live Temp</div>
-                <div className="font-bold">{weather.temperature}°C</div>
-              </div>
-              <div className="bg-black/40 backdrop-blur border border-white/10 text-white text-xs px-3 py-2 rounded">
-                <div className="text-gray-400 text-[10px] uppercase">Atmosphere</div>
-                <div className="font-bold">{isRain ? "Rain" : (isNight ? "Night" : "Clear")}</div>
-              </div>
-              <div className="bg-black/40 backdrop-blur border border-white/10 text-white text-xs px-3 py-2 rounded">
-                <div className="text-gray-400 text-[10px] uppercase">Live Flights</div>
-                <div className="font-bold text-blue-400">OpenSky Active</div>
-              </div>
-            </div>
-          )}
-        </div>
-        
-        <div className="flex flex-col items-end pointer-events-auto">
-          <div className="flex items-center gap-2 text-xs font-mono text-white/80 bg-black/40 px-3 py-1.5 rounded-full backdrop-blur border border-white/10">
-            <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_10px_#22d3ee]"></span>
-            System Online
-          </div>
         </div>
       </div>
 
-      {!isDriveMode && (
+      {/* {!isDriveMode && (
         <button 
           onClick={() => setIsDriveMode(true)}
           className="fixed bottom-6 right-6 bg-red-600 hover:bg-red-500 text-white font-bold px-8 py-3 rounded shadow-[0_0_20px_#dc2626] border border-red-400/50 z-50 animate-pulse tracking-widest uppercase transition-all"
         >
           Enter Vehicle Mode
         </button>
-      )}
+      )} */}
 
       {isDriveMode && (
         <div className="fixed inset-0 pointer-events-none z-50 flex flex-col justify-between">
@@ -1348,18 +2011,26 @@ export const CityStreetViewer = () => {
       )}
 
       {!isDriveMode && (
-        <LandmarkInfoPanel 
-          landmark={selectedLandmark} 
-          onClose={() => setSelectedLandmark(null)} 
+        <ExpandedLandmarkPanel 
+          landmark={expandedLandmark} 
+          onClose={() => setExpandedLandmark(null)} 
           onStartDriving={() => {
-            setStartPos(selectedLandmark.center);
-            setSelectedLandmark(null);
+            setStartPos(expandedLandmark.center);
+            setExpandedLandmark(null);
             setIsDriveMode(true);
           }}
         />
       )}
 
-      <Canvas onClick={() => setSelectedLandmark(null)} shadows camera={{ position: [0, 800, 1000], fov: 40, far: 500000 }} gl={{ logarithmicDepthBuffer: true }}>
+      {/* Power Grid Expanded Panel */}
+      {!isDriveMode && expandedGridNode && (
+        <PowerGridExpandedPanel
+          node={expandedGridNode}
+          onClose={() => setExpandedGridNode(null)}
+        />
+      )}
+
+      <Canvas onClick={() => setExpandedLandmark(null)} shadows camera={{ position: [0, 800, 1000], fov: 40, far: 500000 }} gl={{ logarithmicDepthBuffer: true }}>
         <color attach="background" args={[skyColor]} />
         
         <Sky 
@@ -1372,6 +2043,7 @@ export const CityStreetViewer = () => {
         <Environment preset={renderNight ? "night" : "city"} />
 
         <ambientLight intensity={ambientIntensity} color="#ffffff" />
+        <CameraController targetPos={cameraTarget} onArrived={() => setCameraTarget(null)} />
         <directionalLight 
           position={lightPos as [number, number, number]} 
           intensity={dirIntensity} 
@@ -1398,14 +2070,14 @@ export const CityStreetViewer = () => {
           {cityData?.lakes && <LakesLayer lakes={cityData.lakes} />}
 
           {/* Render Landmarks UI */}
-          {cityData && <LandmarksLayer buildings={cityData.buildings} onSelect={setSelectedLandmark} />}
+          {cityData && <LandmarksLayer buildings={cityData.buildings} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} assetFilters={assetFilters} />}
 
           {/* Real Trees & Procedural Lush Forest */}
           {cityData?.trees && <RealTrees trees={cityData.trees} />}
           <DenseForest lakes={cityData?.lakes} />
 
-          {/* Streetlights */}
-          {cityData?.roads && <StreetlightsLayer roads={cityData.roads} />}
+          {/* Streetlights — pass isNight to boost glow */}
+          {cityData?.roads && <StreetlightsLayer roads={cityData.roads} isNight={renderNight} />}
 
           {/* Project Nolan-Star Driving Features */}
           <DriveableVehicle 
@@ -1416,16 +2088,38 @@ export const CityStreetViewer = () => {
             startPos={startPos}
             telemetryRef={telemetryRef}
           />
-          <CinematicRain active={renderRain} />
+          <CinematicRain active={renderRain} intensity={rainIntensity} />
 
           {/* Dynamic Infrastructure */}
-          <EVStationsLayer stations={evStations} onSelect={setSelectedLandmark} />
+          <EVStationsLayer 
+            stations={evStations} 
+            onFlyTo={handleFlyTo} 
+            onExpand={handleExpand} 
+            focusedLandmark={focusedLandmark}
+            assetFilters={assetFilters}
+          />
+
+          {/* EV Station Simulation Power Grid Layer */}
+          {isEvSim && cityData && (
+            <EVSimulationLayer
+              evStations={evStations}
+              buildings={cityData.buildings}
+              onFlyTo={(node) => {
+                const pos = new THREE.Vector3(node.center[0], node.y || 0, node.center[1]);
+                setCameraTarget(pos);
+                if (node.id) setFocusedGridNode(node);
+                setExpandedGridNode(null);
+              }}
+              onExpand={(node) => setExpandedGridNode(node)}
+              focusedNode={focusedGridNode}
+            />
+          )}
 
           {/* Dynamic Traffic Engine (hide if driving to avoid collision glitches) */}
           {!isDriveMode && cityData?.roads && <TrafficEngine roads={cityData.roads} />}
           
           {/* Dynamic Flight Engine */}
-          <FlightEngine />
+          {isShowFlights && <FlightEngine />}
         </group>
 
         {/* Orbit Controls tuned for massive drone view zooming */}
@@ -1439,10 +2133,11 @@ export const CityStreetViewer = () => {
           target={[0, 0, 0]}
         />
 
+        {/* @ts-ignore */}
         <EffectComposer disableNormalPass multisampling={0}>
           <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
           <Vignette eskil={false} offset={0.1} darkness={isDriveMode ? 1.2 : 1.0} />
-          {isDriveMode && <DepthOfField focusDistance={0} focalLength={0.02} bokehScale={2} height={480} />}
+          { (isDriveMode ? <DepthOfField focusDistance={0} focalLength={0.02} bokehScale={2} height={480} /> : null) as any }
           <N8AO aoRadius={12} intensity={renderNight ? 1.0 : 1.5} color="#0f172a" />
           <Bloom luminanceThreshold={isDriveMode ? 0.3 : (renderNight ? 0.4 : 1.5)} mipmapBlur intensity={isDriveMode ? 1.5 : (renderNight ? 1.0 : 0.05)} />
         </EffectComposer>
