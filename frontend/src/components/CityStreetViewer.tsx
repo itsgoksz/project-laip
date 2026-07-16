@@ -879,6 +879,7 @@ const EVSimulationLayer = ({ evStations, buildings, onFlyTo, onExpand, focusedNo
 
 const EVStationsLayer = ({ stations, onFlyTo, onExpand, focusedLandmark, assetFilters }: { stations: any[], onFlyTo: (st: any) => void, onExpand: (st: any) => void, focusedLandmark: any, assetFilters?: any }) => {
   const visibleStations = useMemo(() => {
+    if (assetFilters?.masterVisible === false) return [];
     if (!assetFilters || assetFilters.all || assetFilters.evStations) return stations;
     return [];
   }, [stations, assetFilters]);
@@ -1028,6 +1029,7 @@ const LakesLayer = ({ lakes }: { lakes: any[] }) => {
 const LandmarksLayer = ({ buildings, onFlyTo, onExpand, focusedLandmark, assetFilters }: { buildings: any[], onFlyTo: (b: any) => void, onExpand: (b: any) => void, focusedLandmark: any, assetFilters?: any }) => {
   const landmarks = useMemo(() => buildings.filter(b => {
     if (!b.name) return false;
+    if (assetFilters?.masterVisible === false) return false;
     
     const isKnown = (b.category === "mall" || b.category === "hospital" || b.category === "apartments" || b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food");
     if (!assetFilters || assetFilters.all) return isKnown;
@@ -1814,7 +1816,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { 
 
   const isLiveNight = weather ? !weather.is_day : false;
   const isLiveRain = weather ? weather.weather_code >= 61 : false;
-  const [assetFilters, setAssetFilters] = useState<any>({ all: true });
+  const [assetFilters, setAssetFilters] = useState<any>({ all: true, masterVisible: true });
   const [cameraTarget, setCameraTarget] = useState<THREE.Vector3 | null>(null);
   const [focusedLandmark, setFocusedLandmark] = useState<any>(null);
   const [expandedLandmark, setExpandedLandmark] = useState<any>(null);

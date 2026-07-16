@@ -1,4 +1,4 @@
-import { ChevronRight, ChevronDown, Building2, Layers, Cpu, Wind, CloudRain, Moon, EvCharger } from 'lucide-react';
+import { ChevronRight, ChevronDown, Building2, Layers, Cpu, Wind, CloudRain, Moon, EvCharger, Eye, EyeOff } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 const TreeNode = ({ label, icon: Icon, children, defaultExpanded = false }: any) => {
@@ -27,7 +27,7 @@ const TreeNode = ({ label, icon: Icon, children, defaultExpanded = false }: any)
   );
 };
 
-const CollapsibleSection = ({ title, children, defaultExpanded = true }: any) => {
+const CollapsibleSection = ({ title, children, defaultExpanded = true, action }: any) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
   return (
     <div className="mb-6">
@@ -35,7 +35,14 @@ const CollapsibleSection = ({ title, children, defaultExpanded = true }: any) =>
         className="flex items-center justify-between cursor-pointer group mb-3" 
         onClick={() => setExpanded(!expanded)}
       >
-        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest group-hover:text-laip-cyan transition-colors">{title}</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest group-hover:text-laip-cyan transition-colors">{title}</h2>
+          {action && (
+            <div onClick={(e) => e.stopPropagation()}>
+              {action}
+            </div>
+          )}
+        </div>
         {expanded ? <ChevronDown size={14} className="text-gray-500 group-hover:text-laip-cyan" /> : <ChevronRight size={14} className="text-gray-500 group-hover:text-laip-cyan" />}
       </div>
       {expanded && <div>{children}</div>}
@@ -44,6 +51,7 @@ const CollapsibleSection = ({ title, children, defaultExpanded = true }: any) =>
 };
 
 export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, assetCounts }: { isNight?: boolean, isRain?: boolean, isEvSim?: boolean, assetCounts?: any }) => {
+  const [masterVisible, setMasterVisible] = useState(true);
   const [assetFilters, setAssetFilters] = useState({
     all: true,
     apartments: false,
@@ -53,8 +61,8 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
   });
 
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent('laip-asset-filter', { detail: assetFilters }));
-  }, [assetFilters]);
+    window.dispatchEvent(new CustomEvent('laip-asset-filter', { detail: { ...assetFilters, masterVisible } }));
+  }, [assetFilters, masterVisible]);
 
   const handleFilterChange = (key: keyof typeof assetFilters) => {
     setAssetFilters(prev => {
@@ -112,7 +120,19 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
           </TreeNode>
         </CollapsibleSection>
 
-        <CollapsibleSection title="Assets" defaultExpanded>
+        <CollapsibleSection 
+          title="Assets" 
+          defaultExpanded
+          action={
+            <button 
+              onClick={() => setMasterVisible(!masterVisible)}
+              className="text-gray-500 hover:text-laip-cyan transition-colors flex items-center justify-center"
+              title={masterVisible ? "Hide all assets" : "Show all assets"}
+            >
+              {masterVisible ? <Eye size={14} /> : <EyeOff size={14} />}
+            </button>
+          }
+        >
           <div className="space-y-2.5 text-sm text-gray-300 ml-2">
             {[
               { id: 'all', label: 'All', count: assetCounts ? (assetCounts.apartments + assetCounts.restaurants + assetCounts.hospital + assetCounts.evStations) : 0 },
