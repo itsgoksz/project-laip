@@ -126,7 +126,7 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
           action={
             <button 
               onClick={() => setMasterVisible(!masterVisible)}
-              className="text-gray-500 hover:text-laip-cyan transition-colors flex items-center justify-center"
+              className="text-gray-500 hover:text-laip-cyan transition-colors flex items-center justify-center ml-1"
               title={masterVisible ? "Hide all assets" : "Show all assets"}
             >
               {masterVisible ? <Eye size={14} /> : <EyeOff size={14} />}

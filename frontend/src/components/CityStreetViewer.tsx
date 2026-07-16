@@ -1806,6 +1806,71 @@ const ExpandedLandmarkPanel = ({ landmark, onClose, onStartDriving }: { landmark
   );
 };
 
+const DroneKeyboardController = ({ isDriveMode }: { isDriveMode: boolean }) => {
+  const { camera, controls } = useThree();
+  const keys = useRef({ up: false, down: false, left: false, right: false });
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        e.preventDefault();
+      }
+      switch(e.key) {
+        case 'ArrowUp': keys.current.up = true; break;
+        case 'ArrowDown': keys.current.down = true; break;
+        case 'ArrowLeft': keys.current.left = true; break;
+        case 'ArrowRight': keys.current.right = true; break;
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      switch(e.key) {
+        case 'ArrowUp': keys.current.up = false; break;
+        case 'ArrowDown': keys.current.down = false; break;
+        case 'ArrowLeft': keys.current.left = false; break;
+        case 'ArrowRight': keys.current.right = false; break;
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, { passive: false });
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
+  useFrame((state, delta) => {
+    if (!controls || isDriveMode) return;
+    
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward);
+    forward.y = 0; 
+    forward.normalize();
+
+    const right = new THREE.Vector3();
+    right.crossVectors(forward, camera.up).normalize();
+
+    const speed = Math.max(50, camera.position.y) * 2 * delta;
+
+    const move = new THREE.Vector3();
+    if (keys.current.up) move.add(forward);
+    if (keys.current.down) move.sub(forward);
+    if (keys.current.left) move.sub(right);
+    if (keys.current.right) move.add(right);
+
+    if (move.lengthSq() > 0) {
+      move.normalize().multiplyScalar(speed);
+      
+      camera.position.add(move);
+      // @ts-ignore
+      if (controls.target) controls.target.add(move);
+      // @ts-ignore
+      if (controls.update) controls.update();
+    }
+  });
+
+  return null;
+};
+
 export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { isShowFlights?: boolean, rainIntensity?: number }) => {
   const [cityData, setCityData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -2123,6 +2188,9 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { 
           {/* Dynamic Flight Engine */}
           {isShowFlights && <FlightEngine />}
         </group>
+
+        {/* Drone keyboard movement controller */}
+        <DroneKeyboardController isDriveMode={isDriveMode} />
 
         {/* Orbit Controls tuned for massive drone view zooming */}
         <OrbitControls 
