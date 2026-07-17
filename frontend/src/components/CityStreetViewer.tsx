@@ -1762,7 +1762,7 @@ const ExpandedLandmarkPanel = ({ landmark, onClose, onStartDriving }: { landmark
   const colorObj = getCategoryColor(landmark.category);
   return (
     <div className="absolute inset-0 flex items-center justify-center pointer-events-auto z-[9999] bg-black/40 backdrop-blur-sm">
-      <div className="w-[450px] bg-gray/75 backdrop-blur-lg border border-white/20 rounded-2xl p-8 text-white shadow-2xl pointer-events-auto animate-in zoom-in-95 duration-300 relative">
+      <div className="w-[450px] bg-gray-900/90 backdrop-blur-lg border border-white/20 rounded-2xl p-8 text-white shadow-2xl pointer-events-auto animate-in zoom-in-95 duration-300 relative">
         <div className="flex items-center gap-4 mb-6 border-b border-white/10 pb-6">
           <div className={`w-16 h-16 rounded-xl ${colorObj.bg} ${colorObj.text} border ${colorObj.border} flex items-center justify-center ${colorObj.shadow}`}>
             <Building2 size={32} />
