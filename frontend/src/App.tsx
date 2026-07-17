@@ -75,6 +75,7 @@ function App() {
               </button>
             </div>
 
+            {activeView === 'city' && (
             <button
               onClick={() => setIsShowFlights(prev => !prev)}
               title="used by OpenSky API"
@@ -83,6 +84,7 @@ function App() {
               <span className={`w-1.5 h-1.5 rounded-full ${isShowFlights ? 'bg-blue-400 animate-pulse' : 'bg-gray-500'}`}></span>
               <span className={`font-bold ${isShowFlights ? 'text-blue-400' : ''}`}>Show Flights</span>
             </button>
+            )}
             {/* Weather Indicators (only shown in City Street view when weather data available) */}
             {activeView === 'city' && weather && (
               <div className="flex items-center gap-2">

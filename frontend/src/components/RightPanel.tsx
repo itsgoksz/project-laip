@@ -209,7 +209,7 @@ export const RightPanel = ({ isNight, isRain, isEvSim, rainIntensity }: any) => 
                 <div className="text-xs text-gray-400 mb-2 flex justify-between items-center">
                   <span className="flex items-center gap-2">
                     Layer Transparency
-                    <button onClick={handleTransparencyReset} title="Reset" className="text-gray-500 hover:text-white transition-colors">
+                    <button onClick={handleTransparencyReset} title="Reset" className={`cursor-pointer transition-colors ${transparency !== 50 ? 'text-yellow-300' : 'text-gray-500 cursor-default'}`}>
                       <RefreshCw size={12} />
                     </button>
                   </span>
