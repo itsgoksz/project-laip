@@ -105,10 +105,11 @@ const DroneMapBase = () => (
 );
 
 const buildingMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.1 });
-buildingMaterial.userData = { uIsNight: { value: 0 } };
+buildingMaterial.userData = { uIsNight: { value: 0 }, uBuildingOpacity: { value: 1.0 } };
 // Procedural Building Shader for windows, floors, and roofs (zero performance cost)
 buildingMaterial.onBeforeCompile = (shader) => {
   shader.uniforms.uIsNight = buildingMaterial.userData.uIsNight;
+  shader.uniforms.uBuildingOpacity = buildingMaterial.userData.uBuildingOpacity;
   shader.vertexShader = shader.vertexShader.replace(
     '#include <common>',
     `#include <common>\n attribute float isApartment;\n varying vec3 vWorldPosition;\n varying vec3 vWorldNormal;\n varying float vIsApartment;`
@@ -119,7 +120,7 @@ buildingMaterial.onBeforeCompile = (shader) => {
   );
   shader.fragmentShader = shader.fragmentShader.replace(
     '#include <common>',
-    `#include <common>\n varying vec3 vWorldPosition;\n varying vec3 vWorldNormal;\n varying float vIsApartment;\n uniform float uIsNight;`
+    `#include <common>\n varying vec3 vWorldPosition;\n varying vec3 vWorldNormal;\n varying float vIsApartment;\n uniform float uIsNight;\n uniform float uBuildingOpacity;`
   );
   shader.fragmentShader = shader.fragmentShader.replace(
     '#include <color_fragment>',
@@ -169,6 +170,7 @@ buildingMaterial.onBeforeCompile = (shader) => {
        float groundAO = clamp(vWorldPosition.y / 20.0, 0.4, 1.0);
        diffuseColor.rgb *= groundAO;
      }
+     diffuseColor.a *= uBuildingOpacity;
     `
   );
   
@@ -462,7 +464,7 @@ const getCategoryColor = (cat: string) => {
   return { text: "text-green-400", bg: "bg-green-500/20", border: "border-green-500/30", shadow: "shadow-[0_0_5px_rgba(34,197,94,0.8)]", hex: "#4ade80", hexShadow: "drop-shadow(0 0 5px #4ade80)" };
 };
 
-const LandmarkMarker = ({ st, onFlyTo, onExpand }: { st: any, onFlyTo: (st: any) => void, onExpand: (st: any) => void }) => {
+const LandmarkMarker = ({ st, onFlyTo, onExpand, pinOpacity = 1 }: { st: any, onFlyTo: (st: any) => void, onExpand: (st: any) => void, pinOpacity?: number }) => {
   const { camera } = useThree();
   const colorObj = getCategoryColor(st.category);
   
@@ -481,7 +483,7 @@ const LandmarkMarker = ({ st, onFlyTo, onExpand }: { st: any, onFlyTo: (st: any)
 
   return (
     <Html position={[0, 45, 0]} center zIndexRange={[100, 0]}>
-      <div className="flex flex-col items-center">
+      <div className="flex flex-col items-center" style={{ opacity: pinOpacity }}>
         <div 
           onClick={handleClick}
           className="bg-black/30 backdrop-blur-sm border border-white/20 p-1 px-2 rounded cursor-pointer pointer-events-auto hover:bg-black/50 transition-all text-white min-w-[70px] text-center shadow-xl group"
@@ -651,7 +653,7 @@ const PowerGridExpandedPanel = ({ node, onClose }: { node: any, onClose: () => v
 };
 
 // Animated electricity flow along a curve
-const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: THREE.Vector3[], color: string, particleColor: string, isHub: boolean }) => {
+const ElectricityPipeline = ({ points, color, particleColor, isHub, opacityMult = 1 }: { points: THREE.Vector3[], color: string, particleColor: string, isHub: boolean, opacityMult?: number }) => {
   const particleRefs = useRef<(THREE.Mesh | null)[]>([]);
   const PARTICLE_COUNT = 18;
   const offsets = useMemo(() => Array.from({ length: PARTICLE_COUNT }, (_, i) => i / PARTICLE_COUNT), []);
@@ -698,9 +700,9 @@ const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: 
         <meshStandardMaterial
           color={color}
           emissive={color}
-          emissiveIntensity={isHub ? 2.5 : 1.8}
+          emissiveIntensity={(isHub ? 2.5 : 1.8) * opacityMult}
           transparent
-          opacity={isHub ? 0.55 : 0.45}
+          opacity={(isHub ? 0.55 : 0.45) * opacityMult}
           depthWrite={false}
           depthTest={false}
           blending={THREE.AdditiveBlending}
@@ -717,9 +719,9 @@ const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: 
           <meshStandardMaterial
             color={particleColor}
             emissive={particleColor}
-            emissiveIntensity={isHub ? 12 : 8}
+            emissiveIntensity={(isHub ? 12 : 8) * opacityMult}
             transparent
-            opacity={0.9}
+            opacity={0.9 * opacityMult}
             depthWrite={false}
             depthTest={false}
             blending={THREE.AdditiveBlending}
@@ -731,13 +733,67 @@ const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: 
   );
 };
 
+// Compute hub, substations, and EV→substation mapping from real building positions
+const computePowerGridMapping = (buildings: any[], evStations: any[]) => {
+  if (!buildings || buildings.length === 0 || evStations.length === 0) {
+    return { hub: null, substations: [], evToSubMap: {} as Record<string, number> };
+  }
+
+  const validBuildings = buildings.filter(b => b.height > 10 && b.name && b.center);
+  if (validBuildings.length === 0) return { hub: null, substations: [], evToSubMap: {} };
+
+  const hubBuilding = validBuildings[Math.min(50, validBuildings.length - 1)];
+  const hubNode = {
+    ...POWER_GRID_HUB,
+    center: hubBuilding.center as [number, number],
+    height: hubBuilding.height,
+  };
+
+  const chosenSubs = [
+    validBuildings[Math.min(100, validBuildings.length - 1)],
+    validBuildings[Math.min(250, validBuildings.length - 1)],
+    validBuildings[Math.min(400, validBuildings.length - 1)]
+  ].filter((b, i, a) => b && b.id !== hubBuilding.id && a.findIndex(x => x.id === b.id) === i);
+
+  let idx = 0;
+  while (chosenSubs.length < 3 && idx < validBuildings.length) {
+    const b = validBuildings[idx++];
+    if (b.id !== hubBuilding.id && !chosenSubs.find(s => s.id === b.id)) {
+      chosenSubs.push(b);
+    }
+  }
+
+  const subNodes = POWER_SUBSTATIONS.slice(0, chosenSubs.length).map((sub, i) => ({
+    ...sub,
+    center: chosenSubs[i].center as [number, number],
+    height: chosenSubs[i].height,
+  }));
+
+  const evToSubMap: Record<string, number> = {};
+  evStations.forEach(ev => {
+    let closestIdx = 0;
+    let closestDist = Infinity;
+    subNodes.forEach((sub, i) => {
+      const dx = ev.center[0] - sub.center[0];
+      const dz = ev.center[1] - sub.center[1];
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < closestDist) { closestDist = dist; closestIdx = i; }
+    });
+    evToSubMap[ev.id] = closestIdx;
+  });
+
+  return { hub: hubNode, substations: subNodes, evToSubMap };
+};
+
 // Full EV Simulation overlay layer
-const EVSimulationLayer = ({ evStations, buildings, onFlyTo, onExpand, focusedNode }: {
+const EVSimulationLayer = ({ evStations, buildings, onFlyTo, onExpand, focusedNode, selectedSubIdx, pipelineOpacityMult }: {
   evStations: any[],
   buildings: any[],
   onFlyTo: (n: any) => void,
   onExpand: (n: any) => void,
   focusedNode: any,
+  selectedSubIdx: number | null,
+  pipelineOpacityMult: number,
 }) => {
 
   // Trigger wide view zoom on mount (once)
@@ -747,59 +803,10 @@ const EVSimulationLayer = ({ evStations, buildings, onFlyTo, onExpand, focusedNo
   }, []);
 
   // Use static buildings for the Hub and sub-stations
-  const { hub, substations, evToSubMap } = useMemo(() => {
-    if (!buildings || buildings.length === 0 || evStations.length === 0) {
-      return { hub: null, substations: [], evToSubMap: {} };
-    }
-
-    const validBuildings = buildings.filter(b => b.height > 10 && b.name && b.center);
-    if (validBuildings.length === 0) return { hub: null, substations: [], evToSubMap: {} };
-
-    // Pick deterministic buildings
-    const hubBuilding = validBuildings[Math.min(50, validBuildings.length - 1)];
-    const hubNode = {
-      ...POWER_GRID_HUB,
-      center: hubBuilding.center as [number, number],
-      height: hubBuilding.height,
-    };
-
-    const chosenSubs = [
-      validBuildings[Math.min(100, validBuildings.length - 1)],
-      validBuildings[Math.min(250, validBuildings.length - 1)],
-      validBuildings[Math.min(400, validBuildings.length - 1)]
-    ].filter((b, i, a) => b && b.id !== hubBuilding.id && a.findIndex(x => x.id === b.id) === i);
-
-    // Fill to 3 if needed
-    let idx = 0;
-    while (chosenSubs.length < 3 && idx < validBuildings.length) {
-      const b = validBuildings[idx++];
-      if (b.id !== hubBuilding.id && !chosenSubs.find(s => s.id === b.id)) {
-        chosenSubs.push(b);
-      }
-    }
-
-    const subNodes = POWER_SUBSTATIONS.slice(0, chosenSubs.length).map((sub, i) => ({
-      ...sub,
-      center: chosenSubs[i].center as [number, number],
-      height: chosenSubs[i].height,
-    }));
-
-    // Assign each EV station to its closest sub-station
-    const evToSubMap: Record<string, number> = {};
-    evStations.forEach(ev => {
-      let closestIdx = 0;
-      let closestDist = Infinity;
-      subNodes.forEach((sub, i) => {
-        const dx = ev.center[0] - sub.center[0];
-        const dz = ev.center[1] - sub.center[1];
-        const dist = Math.sqrt(dx*dx + dz*dz);
-        if (dist < closestDist) { closestDist = dist; closestIdx = i; }
-      });
-      evToSubMap[ev.id] = closestIdx;
-    });
-
-    return { hub: hubNode, substations: subNodes, evToSubMap };
-  }, [buildings, evStations]);
+  const { hub, substations, evToSubMap } = useMemo(
+    () => computePowerGridMapping(buildings, evStations),
+    [buildings, evStations]
+  );
 
   if (!hub) return null;
 
@@ -824,19 +831,25 @@ const EVSimulationLayer = ({ evStations, buildings, onFlyTo, onExpand, focusedNo
         <PowerGridMarker node={hub} onFlyTo={onFlyTo} onExpand={onExpand} />
       </group>
 
-      {/* Hub → Sub-Station pipelines */}
-      {substations.map((sub) => (
-        <ElectricityPipeline
-          key={`hub-${sub.id}`}
-          points={[hubPos, new THREE.Vector3(sub.center[0], 12, sub.center[1])]}
-          color="#ef4444"
-          particleColor="#fca5a5"
-          isHub={true}
-        />
-      ))}
-
-      {/* Sub-stations */}
+      {/* Hub → Sub-Station pipelines — only for selected branch (or all if main grid selected) */}
       {substations.map((sub, subIdx) => {
+        if (selectedSubIdx !== null && selectedSubIdx !== subIdx) return null;
+        return (
+          <ElectricityPipeline
+            key={`hub-${sub.id}`}
+            points={[hubPos, new THREE.Vector3(sub.center[0], 12, sub.center[1])]}
+            color="#ef4444"
+            particleColor="#fca5a5"
+            isHub={true}
+            opacityMult={pipelineOpacityMult}
+          />
+        );
+      })}
+
+      {/* Sub-stations — only show selected branch (or all if main grid selected) */}
+      {substations.map((sub, subIdx) => {
+        if (selectedSubIdx !== null && selectedSubIdx !== subIdx) return null;
+
         const subPos = new THREE.Vector3(sub.center[0], 12, sub.center[1]);
         const myEVStations = evStations.filter(ev => evToSubMap[ev.id] === subIdx);
         const colorObj = getPowerGridColor(sub.category);
@@ -868,6 +881,7 @@ const EVSimulationLayer = ({ evStations, buildings, onFlyTo, onExpand, focusedNo
                 color="#eab308"
                 particleColor="#fde047"
                 isHub={false}
+                opacityMult={pipelineOpacityMult}
               />
             ))}
           </group>
@@ -877,7 +891,16 @@ const EVSimulationLayer = ({ evStations, buildings, onFlyTo, onExpand, focusedNo
   );
 };
 
-const EVStationsLayer = ({ stations, onFlyTo, onExpand, focusedLandmark, assetFilters }: { stations: any[], onFlyTo: (st: any) => void, onExpand: (st: any) => void, focusedLandmark: any, assetFilters?: any }) => {
+const EVStationsLayer = ({ stations, onFlyTo, onExpand, focusedLandmark, assetFilters, selectedSubIdx, evToSubMap, isEvSim }: {
+  stations: any[],
+  onFlyTo: (st: any) => void,
+  onExpand: (st: any) => void,
+  focusedLandmark: any,
+  assetFilters?: any,
+  selectedSubIdx?: number | null,
+  evToSubMap?: Record<string, number>,
+  isEvSim?: boolean,
+}) => {
   const visibleStations = useMemo(() => {
     if (assetFilters?.masterVisible === false) return [];
     if (!assetFilters || assetFilters.all || assetFilters.evStations) return stations;
@@ -893,6 +916,8 @@ const EVStationsLayer = ({ stations, onFlyTo, onExpand, focusedLandmark, assetFi
         const spacing = 3;
         const startX = -((numChargers - 1) * spacing) / 2;
         const isFocused = focusedLandmark?.id === st.id;
+        const isConnectedToSelectedSub = selectedSubIdx === null || evToSubMap?.[st.id] === selectedSubIdx;
+        const pinOpacity = isEvSim && selectedSubIdx !== null && !isConnectedToSelectedSub ? 0.6 : 1;
         
         return (
           <group key={st.id} position={[st.center[0], 0, st.center[1]]}>
@@ -942,8 +967,8 @@ const EVStationsLayer = ({ stations, onFlyTo, onExpand, focusedLandmark, assetFi
               </group>
             ))}
 
-            {/* Interactive Floating Box */}
-            <LandmarkMarker st={st} onFlyTo={onFlyTo} onExpand={onExpand} />
+            {/* Interactive Floating Box — only the pin label is dimmed for unconnected stations */}
+            <LandmarkMarker st={st} onFlyTo={onFlyTo} onExpand={onExpand} pinOpacity={pinOpacity} />
           </group>
         );
       })}
@@ -1380,10 +1405,10 @@ const CinematicRain = ({ active, intensity = 5 }: { active: boolean, intensity?:
   
   const basePositions = useMemo(() => {
     return Array.from({ length: 10000 }, () => ({
-      ox: (Math.random() - 0.5) * 1200,
-      oz: (Math.random() - 0.5) * 1200,
-      speed: 180 + Math.random() * 120,
-      height: 300 + Math.random() * 200,
+      ox: (Math.random() - 0.5) * 2400,
+      oz: (Math.random() - 0.5) * 2400,
+      speed: 200 + Math.random() * 150,
+      height: 450 + Math.random() * 250,
     }));
   }, []);
 
@@ -1890,6 +1915,8 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { 
   const [isEvSim, setIsEvSim] = useState(false);
   const [focusedGridNode, setFocusedGridNode] = useState<any>(null);
   const [expandedGridNode, setExpandedGridNode] = useState<any>(null);
+  const [selectedSubIdx, setSelectedSubIdx] = useState<number | null>(null); // null = main grid (all visible)
+  const [layerTransparency, setLayerTransparency] = useState(50); // 0-100, 50=normal
 
   useEffect(() => {
     const handleSim = (e: any) => {
@@ -1904,16 +1931,36 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { 
         setExpandedGridNode(null);
       }
     };
+    const handleGridSelect = (e: any) => setSelectedSubIdx(e.detail.subIdx ?? null);
+    const handleTransparency = (e: any) => setLayerTransparency(e.detail.value);
 
     window.addEventListener('laip-sim', handleSim);
     window.addEventListener('laip-asset-filter', handleFilter);
     window.addEventListener('laip-ev-sim', handleEvSim);
+    window.addEventListener('laip-grid-select', handleGridSelect);
+    window.addEventListener('laip-transparency', handleTransparency);
     return () => {
       window.removeEventListener('laip-sim', handleSim);
       window.removeEventListener('laip-asset-filter', handleFilter);
       window.removeEventListener('laip-ev-sim', handleEvSim);
+      window.removeEventListener('laip-grid-select', handleGridSelect);
+      window.removeEventListener('laip-transparency', handleTransparency);
     };
   }, []);
+
+  // Update building material opacity based on transparency slider (global dim)
+  useEffect(() => {
+    if (layerTransparency > 50) {
+      const t = (layerTransparency - 50) / 50; // 0 at center, 1 at full right
+      buildingMaterial.userData.uBuildingOpacity.value = 1 - t;
+      buildingMaterial.transparent = t > 0;
+      buildingMaterial.depthWrite = t < 0.5;
+    } else {
+      buildingMaterial.userData.uBuildingOpacity.value = 1;
+      buildingMaterial.transparent = false;
+      buildingMaterial.depthWrite = true;
+    }
+  }, [layerTransparency]);
 
   // Broadcast weather state to App.tsx whenever it changes
   useEffect(() => {
@@ -1995,6 +2042,12 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { 
   // Force extreme cinematic conditions during GTA mode
   const renderNight = isSimNight || isLiveNight;
   const renderRain = isSimRain || isLiveRain || isDriveMode;
+  const pipelineOpacityMult = layerTransparency < 50 ? Math.max(0.1, layerTransparency / 50) : 1.0;
+
+  const { evToSubMap } = useMemo(
+    () => computePowerGridMapping(cityData?.buildings ?? [], evStations),
+    [cityData?.buildings, evStations]
+  );
 
   useEffect(() => {
     buildingMaterial.userData.uIsNight.value = renderNight ? 1 : 0;
@@ -2155,7 +2208,6 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { 
             startPos={startPos}
             telemetryRef={telemetryRef}
           />
-          <CinematicRain active={renderRain} intensity={rainIntensity} />
 
           {/* Dynamic Infrastructure */}
           <EVStationsLayer 
@@ -2164,6 +2216,9 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { 
             onExpand={handleExpand} 
             focusedLandmark={focusedLandmark}
             assetFilters={assetFilters}
+            selectedSubIdx={selectedSubIdx}
+            evToSubMap={evToSubMap}
+            isEvSim={isEvSim}
           />
 
           {/* EV Station Simulation Power Grid Layer */}
@@ -2179,6 +2234,8 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { 
               }}
               onExpand={(node) => setExpandedGridNode(node)}
               focusedNode={focusedGridNode}
+              selectedSubIdx={selectedSubIdx}
+              pipelineOpacityMult={pipelineOpacityMult}
             />
           )}
 
@@ -2188,6 +2245,9 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { 
           {/* Dynamic Flight Engine */}
           {isShowFlights && <FlightEngine />}
         </group>
+
+        {/* Cinematic Rain — rendered outside city group so it spans world-space correctly */}
+        <CinematicRain active={renderRain} intensity={rainIntensity} />
 
         {/* Drone keyboard movement controller */}
         <DroneKeyboardController isDriveMode={isDriveMode} />

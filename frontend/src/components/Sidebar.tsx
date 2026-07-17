@@ -1,4 +1,4 @@
-import { ChevronRight, ChevronDown, Building2, Layers, Cpu, Wind, CloudRain, Moon, EvCharger, Eye, EyeOff } from 'lucide-react';
+import { ChevronRight, ChevronDown, Building2, Layers, Cpu, Wind, CloudRain, Moon, EvCharger, Eye, EyeOff, Zap, Radio, Network } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 const TreeNode = ({ label, icon: Icon, children, defaultExpanded = false }: any) => {
@@ -77,6 +77,22 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
     });
   };
 
+  // EV Power Grid hierarchy selection: null = Main Grid (full view), 0/1/2 = specific sub
+  const [selectedGridBranch, setSelectedGridBranch] = useState<number | null>(null);
+
+  const selectGridBranch = (subIdx: number | null) => {
+    setSelectedGridBranch(subIdx);
+    window.dispatchEvent(new CustomEvent('laip-grid-select', { detail: { subIdx } }));
+  };
+
+  // Reset grid branch when EV sim is turned off
+  useEffect(() => {
+    if (!isEvSim) {
+      setSelectedGridBranch(null);
+      window.dispatchEvent(new CustomEvent('laip-grid-select', { detail: { subIdx: null } }));
+    }
+  }, [isEvSim]);
+
   return (
     <div className="w-72 border-r border-laip-border bg-laip-panel p-4 flex flex-col h-full shrink-0 z-10 backdrop-blur-md">
       <div className="mb-6 flex items-center gap-3">
@@ -101,7 +117,77 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
       </div>
       
       <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-        <CollapsibleSection title="Asset Hierarchy" defaultExpanded={false}>
+        {/* EV Power Grid Hierarchy — only visible when EV simulation is on */}
+        {isEvSim && (
+          <CollapsibleSection title="EV Power Grid" defaultExpanded>
+            <div className="ml-2">
+              {/* Main Grid / Full View Row */}
+              <div
+                onClick={() => selectGridBranch(null)}
+                className={`flex items-center gap-2 p-2 rounded cursor-pointer text-sm transition-all border mb-1 ${
+                  selectedGridBranch === null
+                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.2)]'
+                    : 'hover:bg-white/10 border-transparent text-gray-400'
+                }`}
+              >
+                <div className="flex items-center justify-center w-5 h-5 rounded bg-amber-500/20 shrink-0">
+                  <Zap size={11} className="text-amber-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] font-semibold truncate">BESCOM JP Nagar</div>
+                  <div className="text-[9px] text-gray-500 uppercase tracking-wider">Main Power Grid</div>
+                </div>
+                {selectedGridBranch === null && (
+                  <span className="text-[9px] font-bold text-amber-400 uppercase tracking-wider shrink-0">Full View</span>
+                )}
+              </div>
+
+              {/* Substations */}
+              <div className="ml-2 pl-3 border-l border-amber-500/25 space-y-1">
+                {[
+                  { name: 'Sarakki Sub-Station', feeder: 'JPR-F04', evCount: 4 },
+                  { name: 'BTM Layout Sub-Station', feeder: 'BTM-F07', evCount: 3 },
+                  { name: 'Bannerghatta Rd Sub-Station', feeder: 'BNR-F02', evCount: 3 },
+                ].map((sub, i) => (
+                  <div
+                    key={i}
+                    onClick={() => selectGridBranch(i)}
+                    className={`flex items-center gap-2 p-1.5 rounded cursor-pointer transition-all border ${
+                      selectedGridBranch === i
+                        ? 'bg-yellow-500/15 border-yellow-500/40 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.2)]'
+                        : 'hover:bg-white/10 border-transparent text-gray-400'
+                    }`}
+                  >
+                    <div className="flex items-center justify-center w-4 h-4 rounded bg-yellow-500/20 shrink-0">
+                      <Radio size={9} className="text-yellow-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[10px] font-medium truncate">{sub.name}</div>
+                      <div className="text-[8px] text-gray-600 uppercase tracking-wider">{sub.feeder} · {sub.evCount} EV stations</div>
+                    </div>
+                    {selectedGridBranch === i && (
+                      <span className="text-[8px] font-bold text-yellow-400 uppercase shrink-0">Branch</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Legend */}
+              {selectedGridBranch !== null && (
+                <div className="mt-3 p-2 bg-black/30 rounded border border-white/5 flex items-start gap-2">
+                  <Network size={10} className="text-gray-500 mt-0.5 shrink-0" />
+                  <div className="text-[9px] text-gray-500 leading-relaxed">
+                    Showing branch: <span className="text-yellow-400">Main Grid → Sub-Station → EV Stations</span>. Other branches hidden.
+                  </div>
+                </div>
+              )}
+            </div>
+          </CollapsibleSection>
+        )}
+
+        {/* Static Asset Hierarchy — hide when EV simulation is on */}
+        {!isEvSim && (
+          <CollapsibleSection title="Asset Hierarchy" defaultExpanded={false}>
           <TreeNode label="HQ Campus" icon={Building2} defaultExpanded>
             <TreeNode label="Building A" icon={Building2} defaultExpanded>
               <TreeNode label="Floor 1" icon={Layers}>
@@ -118,7 +204,8 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
               </TreeNode>
             </TreeNode>
           </TreeNode>
-        </CollapsibleSection>
+          </CollapsibleSection>
+        )}
 
         <CollapsibleSection 
           title="Assets" 
