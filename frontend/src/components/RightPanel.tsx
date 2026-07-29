@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Activity, MessageSquare, Sliders, Zap, Radio, RefreshCw } from 'lucide-react';
+import { Activity, MessageSquare, Sliders, Zap, Radio, RefreshCw, Navigation } from 'lucide-react';
 
 // Computed from BESCOM mock data
 const SUB_CAPACITIES = [
@@ -13,8 +13,32 @@ const EV_KW_PER_STATION = 50; // DC fast charger kW
 const EV_ACTIVE_RATE = 0.82; // 82% utilization
 const EV_ACTIVE_KW = +(TOTAL_EV_STATIONS * EV_KW_PER_STATION * EV_ACTIVE_RATE).toFixed(0);
 
-export const RightPanel = ({ isNight, isRain, isEvSim, rainIntensity }: any) => {
+export const RightPanel = ({ isNight, isRain, isEvSim, rainIntensity, cameraMode }: any) => {
   const [transparency, setTransparency] = useState(50);
+  const [pressedKeys, setPressedKeys] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (cameraMode !== 'drone') return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      setPressedKeys(prev => ({ ...prev, [e.key.toLowerCase()]: true, [e.key]: true }));
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      setPressedKeys(prev => ({ ...prev, [e.key.toLowerCase()]: false, [e.key]: false }));
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [cameraMode]);
+
+  const getKeyStyle = (key: string) => {
+    const isPressed = pressedKeys[key.toLowerCase()] || pressedKeys[key];
+    return isPressed
+      ? 'bg-laip-cyan text-black font-bold border-laip-cyan shadow-[0_0_8px_#00f0ff] scale-105 transition-all'
+      : 'bg-white/10 text-white border-white/20';
+  };
 
   const getRainStatus = (intensity: number) => {
     if (intensity > 50) return { text: "Violent / Intense", color: "text-red-500" };
@@ -246,6 +270,67 @@ export const RightPanel = ({ isNight, isRain, isEvSim, rainIntensity }: any) => 
         </section>
 
       </div>
+
+      {/* Drone Cam Flight Controls Section (Displayed above AI Copilot border when Drone Cam is ON) */}
+      {cameraMode === 'drone' && (
+        <section className="mt-4 pt-4 border-t border-laip-border">
+          <h2 className="text-xs font-semibold text-laip-cyan uppercase tracking-widest mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              <Navigation size={14} className="text-laip-cyan animate-pulse" /> Drone Cam Controls
+            </span>
+            <span className="text-[9px] bg-laip-cyan/20 text-laip-cyan px-2 py-0.5 rounded font-mono font-semibold">ON</span>
+          </h2>
+
+          <div className="bg-black/40 border border-laip-cyan/30 rounded-lg p-3 space-y-2.5">
+            {/* WSAD Movement */}
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-300 font-medium">Movement (WASD)</span>
+              <div className="flex items-center gap-1 font-mono">
+                {['W', 'A', 'S', 'D'].map(k => (
+                  <kbd key={k} className={`w-6 h-6 flex items-center justify-center rounded border text-[11px] font-bold shadow ${getKeyStyle(k)}`}>
+                    {k}
+                  </kbd>
+                ))}
+              </div>
+            </div>
+
+            {/* Q & E Roll/Elevation */}
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-300 font-medium">Roll / Altitude (QE)</span>
+              <div className="flex items-center gap-1 font-mono">
+                {['Q', 'E'].map(k => (
+                  <kbd key={k} className={`w-6 h-6 flex items-center justify-center rounded border text-[11px] font-bold shadow ${getKeyStyle(k)}`}>
+                    {k}
+                  </kbd>
+                ))}
+              </div>
+            </div>
+
+            {/* Arrow Keys */}
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-300 font-medium">Arrow Steer</span>
+              <div className="flex items-center gap-1 font-mono">
+                {[
+                  { label: '↑', key: 'ArrowUp' },
+                  { label: '↓', key: 'ArrowDown' },
+                  { label: '←', key: 'ArrowLeft' },
+                  { label: '→', key: 'ArrowRight' }
+                ].map(item => (
+                  <kbd key={item.key} className={`w-6 h-6 flex items-center justify-center rounded border text-[11px] font-bold shadow ${getKeyStyle(item.key)}`}>
+                    {item.label}
+                  </kbd>
+                ))}
+              </div>
+            </div>
+
+            {/* Mouse Steering */}
+            <div className="flex items-center justify-between text-xs pt-1 border-t border-white/5">
+              <span className="text-gray-400 text-[11px]">Look & Pitch</span>
+              <span className="text-[10px] font-mono text-laip-cyan bg-laip-cyan/10 px-2 py-0.5 rounded border border-laip-cyan/20">Mouse Drag</span>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* AI Copilot Placeholder */}
       <div className="mt-4 pt-4 border-t border-laip-border">

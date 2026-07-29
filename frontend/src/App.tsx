@@ -131,7 +131,7 @@ function App() {
       </div>
       
       {/* Right Intelligence Panel */}
-      <RightPanel isNight={isSimNight} isRain={isSimRain} isEvSim={isEvSim} rainIntensity={rainIntensity} />
+      <RightPanel isNight={isSimNight} isRain={isSimRain} isEvSim={isEvSim} rainIntensity={rainIntensity} cameraMode={cameraMode} />
     </div>
   );
 }
