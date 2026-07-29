@@ -57,17 +57,24 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
     apartments: false,
     restaurants: false,
     hospital: false,
-    evStations: false
+    evStations: false,
+    roads: false
   });
+  const [cityTransparency, setCityTransparency] = useState(0);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('laip-asset-filter', { detail: { ...assetFilters, masterVisible } }));
   }, [assetFilters, masterVisible]);
 
+  useEffect(() => {
+    const opacity = 1.0 - (cityTransparency / 100);
+    window.dispatchEvent(new CustomEvent('laip-city-opacity', { detail: { opacity } }));
+  }, [cityTransparency]);
+
   const handleFilterChange = (key: keyof typeof assetFilters) => {
     setAssetFilters(prev => {
       if (key === 'all') {
-        return { all: true, apartments: false, restaurants: false, hospital: false, evStations: false };
+        return { all: true, apartments: false, restaurants: false, hospital: false, evStations: false, roads: false };
       } else {
         const next = { ...prev, [key]: !prev[key], all: false };
         const anyTrue = Object.entries(next).some(([k, v]) => k !== 'all' && v);
@@ -222,11 +229,12 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
         >
           <div className="space-y-2.5 text-sm text-gray-300 ml-2">
             {[
-              { id: 'all', label: 'All', count: assetCounts ? (assetCounts.apartments + assetCounts.restaurants + assetCounts.hospital + assetCounts.evStations) : 0 },
+              { id: 'all', label: 'All', count: assetCounts ? (assetCounts.apartments + assetCounts.restaurants + assetCounts.hospital + assetCounts.evStations + (assetCounts.roads || 0)) : 0 },
               { id: 'apartments', label: 'Apartments', count: assetCounts?.apartments || 0 },
               { id: 'restaurants', label: 'Restaurants', count: assetCounts?.restaurants || 0 },
               { id: 'hospital', label: 'Hospital', count: assetCounts?.hospital || 0 },
-              { id: 'evStations', label: 'EV Stations', count: assetCounts?.evStations || 0 }
+              { id: 'evStations', label: 'EV Stations', count: assetCounts?.evStations || 0 },
+              { id: 'roads', label: 'Road Networks', count: assetCounts?.roads || 0 }
             ].map(item => (
               <label key={item.id} className="flex items-center gap-3 cursor-pointer group transition-colors ml-[32px] py-0.5">
                 <input 
@@ -238,6 +246,20 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
                 <span className="text-gray-400 group-hover:text-gray-200 transition-colors">{item.label} {item.count ? `(${item.count})` : ''}</span>
               </label>
             ))}
+
+            <div className="mt-4 ml-[32px] mr-2 p-3 bg-black/30 rounded-md border border-white/10 shadow-inner">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-[11px] text-laip-cyan font-medium uppercase tracking-wider">City Transparency</span>
+                <span className="text-[11px] text-gray-400 font-mono">{cityTransparency}%</span>
+              </div>
+              <input 
+                type="range" 
+                min="0" max="100" 
+                value={cityTransparency}
+                onChange={(e) => setCityTransparency(parseInt(e.target.value))}
+                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-laip-cyan"
+              />
+            </div>
           </div>
         </CollapsibleSection>
 
@@ -283,7 +305,8 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
                     apartments: false,
                     restaurants: false,
                     hospital: false,
-                    evStations: true
+                    evStations: true,
+                    roads: false
                   });
                 }
               }}
