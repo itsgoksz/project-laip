@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 export const BottomBar = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [scenario, setScenario] = useState("Peak Load Test");
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
@@ -20,8 +21,8 @@ export const BottomBar = () => {
   }, [isPlaying]);
 
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent('sim-progress', { detail: progress }));
-  }, [progress]);
+    window.dispatchEvent(new CustomEvent('sim-progress', { detail: { progress, scenario } }));
+  }, [progress, scenario]);
 
   return (
     <div className="h-16 border-t border-laip-border bg-laip-panel flex items-center px-6 shrink-0 z-10 backdrop-blur-md">
@@ -67,8 +68,18 @@ export const BottomBar = () => {
         </div>
       </div>
       
-      <div className="w-48 flex justify-end">
-        <div className="text-xs text-gray-500">Scenario: <span className="text-gray-300">Peak Load Test</span></div>
+      <div className="w-64 flex justify-end">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Scenario:</span>
+          <select 
+            className="bg-black/40 border border-white/20 text-gray-300 text-xs rounded px-2 py-1 outline-none focus:border-laip-cyan/50"
+            value={scenario}
+            onChange={(e) => setScenario(e.target.value)}
+          >
+            <option value="Peak Load Test">Peak Load Test</option>
+            <option value="Summer Solar Holiday">Summer Solar Holiday</option>
+          </select>
+        </div>
       </div>
     </div>
   );

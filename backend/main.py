@@ -5,6 +5,7 @@ import math
 import uvicorn
 import asyncio
 import traceback
+import time
 
 app = FastAPI(title="LAIP Live Data Backend")
 
@@ -22,6 +23,9 @@ CITY_DATA_CACHE = None
 @app.get("/health")
 def health_check():
     return {"status": "ok", "message": "LAIP Backend is running!"}
+
+FLIGHTS_CACHE = None
+LAST_FLIGHTS_FETCH = 0
 
 @app.get("/api/weather")
 async def get_weather():
@@ -93,6 +97,12 @@ async def get_ev_stations():
 
 @app.get("/api/flights")
 async def get_flights():
+    global FLIGHTS_CACHE, LAST_FLIGHTS_FETCH
+    
+    # Cache flights for 30 seconds to avoid HTTP 429 Too Many Requests
+    if FLIGHTS_CACHE and (time.time() - LAST_FLIGHTS_FETCH < 30):
+        return FLIGHTS_CACHE
+        
     # Bounding box roughly covering Bangalore airspace
     lamin, lomin, lamax, lomax = 12.5, 77.0, 13.5, 78.5
     
@@ -126,9 +136,15 @@ async def get_flights():
                     "velocity": state[9] if state[9] else 0
                 })
             
-            return {"flights": flights}
+            
+            FLIGHTS_CACHE = {"flights": flights}
+            LAST_FLIGHTS_FETCH = time.time()
+            return FLIGHTS_CACHE
     except Exception as e:
         print("Flight fetch error:", e)
+        # Return cached flights if available even if expired, to prevent UI breakage
+        if FLIGHTS_CACHE:
+            return FLIGHTS_CACHE
         return {"error": "Failed to fetch flights"}
 
 @app.get("/api/city-data")
@@ -141,11 +157,11 @@ async def get_city_data():
     lat_center = 12.905 # Shifted south to include Puttenahalli
     lon_center = 77.59
     
-    # 4.5km x 4.5km Bounding Box (Safe for Overpass API limits while covering most of JP Nagar)
-    lat_min = lat_center - 0.020
-    lat_max = lat_center + 0.020
-    lon_min = lon_center - 0.020
-    lon_max = lon_center + 0.020
+    # 3km x 3km Bounding Box (Highly safe for Overpass API limits)
+    lat_min = lat_center - 0.015
+    lat_max = lat_center + 0.015
+    lon_min = lon_center - 0.015
+    lon_max = lon_center + 0.015
 
     # Overpass Query
     query = f"""
