@@ -12,8 +12,9 @@ function App() {
   const [isSimRain, setIsSimRain] = useState(false);
   const [isEvSim, setIsEvSim] = useState(false);
   const [isShowFlights, setIsShowFlights] = useState(true);
+  const [cameraMode, setCameraMode] = useState<'map' | 'drone'>('map');
   const [rainIntensity, setRainIntensity] = useState(5);
-  const [assetCounts, setAssetCounts] = useState<any>({ apartments: 0, restaurants: 0, hospital: 0, evStations: 0 });
+  const [assetCounts, setAssetCounts] = useState<any>({ apartments: 0, restaurants: 0, hospital: 0, evStations: 0, roads: 0 });
 
   // Listen for weather/sim events from CityStreetViewer
   useEffect(() => {
@@ -85,6 +86,13 @@ function App() {
               <span className={`font-bold ${isShowFlights ? 'text-blue-400' : ''}`}>Show Flights</span>
             </button>
             )}
+            <button
+              onClick={() => setCameraMode(prev => prev === 'map' ? 'drone' : 'map')}
+              title="Toggle WASD Drone Camera"
+              className={`flex items-center gap-1.5 border border-white/10 text-xs px-2.5 py-1 rounded transition-colors cursor-pointer ${cameraMode === 'drone' ? 'bg-laip-cyan/20 text-laip-cyan border-laip-cyan/50' : 'bg-transparent text-gray-500'}`}
+            >
+              <span className={`font-bold`}>Drone Cam</span>
+            </button>
             {/* Weather Indicators (only shown in City Street view when weather data available) */}
             {activeView === 'city' && weather && (
               <div className="flex items-center gap-2">
@@ -115,7 +123,7 @@ function App() {
 
         {/* 3D Scene — sits below the header, no absolute positioning */}
         <div className="flex-1 w-full min-h-0 relative overflow-hidden">
-          {activeView === 'zeon' ? <SceneViewer /> : <CityStreetViewer isShowFlights={isShowFlights} rainIntensity={rainIntensity} />}
+          {activeView === 'zeon' ? <SceneViewer /> : <CityStreetViewer isShowFlights={isShowFlights} rainIntensity={rainIntensity} cameraMode={cameraMode} />}
         </div>
         
         {/* Bottom Timeline Bar */}

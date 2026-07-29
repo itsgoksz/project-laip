@@ -1863,7 +1863,7 @@ const DroneKeyboardController = ({ isDriveMode }: { isDriveMode: boolean }) => {
     };
   }, []);
 
-  useFrame((state, delta) => {
+  useFrame((_state, delta) => {
     if (!controls || isDriveMode) return;
     
     const forward = new THREE.Vector3();
@@ -1896,7 +1896,7 @@ const DroneKeyboardController = ({ isDriveMode }: { isDriveMode: boolean }) => {
   return null;
 };
 
-export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5 }: { isShowFlights?: boolean, rainIntensity?: number }) => {
+export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, cameraMode: _cameraMode }: { isShowFlights?: boolean, rainIntensity?: number, cameraMode?: 'map' | 'drone' }) => {
   const [cityData, setCityData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [evStations, setEvStations] = useState<any[]>([]);
