@@ -184,7 +184,7 @@ export function wgs84ToECEF(lat: number, lon: number, alt: number): THREE.Vector
   return new THREE.Vector3(x, y, z);
 }
 
-const TilesEnvironment = ({ isVisible }: { isVisible: boolean }) => {
+const TilesEnvironment = ({ isVisible, lat, lon, alt }: { isVisible: boolean, lat: number, lon: number, alt: number }) => {
   const gl = useThree(state => state.gl);
   
   const dracoLoader = useMemo(() => {
@@ -203,21 +203,21 @@ const TilesEnvironment = ({ isVisible }: { isVisible: boolean }) => {
   const authArgs = useMemo(() => [{ apiToken: "AIzaSyCScW-2xJuAbh-vu69HG6rD3mCwAWizVcs", autoRefreshToken: true }], []);
   const gltfArgs = useMemo(() => [{ dracoLoader, ktxLoader: ktx2Loader, meshoptDecoder: MeshoptDecoder }], [dracoLoader, ktx2Loader]);
 
-  // Calculate inverse transformation matrix to align JP Nagar flat plane [0,0,0] with Google Tiles ECEF
+  // Calculate inverse transformation matrix to align the city flat plane [0,0,0] with Google Tiles ECEF
   const inverseMatrix = useMemo(() => {
-    const jpCenterECEF = wgs84ToECEF(LAT_CENTER, LON_CENTER, 880); // Bangalore altitude ~880m
-    const upVector = jpCenterECEF.clone().normalize();
+    const centerECEF = wgs84ToECEF(lat, lon, alt);
+    const upVector = centerECEF.clone().normalize();
     const northPole = new THREE.Vector3(0, 0, 1);
     const ln = northPole.clone().sub(upVector.clone().multiplyScalar(northPole.dot(upVector))).normalize();
     
     const dummy = new THREE.Object3D();
-    dummy.position.copy(jpCenterECEF);
+    dummy.position.copy(centerECEF);
     dummy.up.copy(upVector);
-    dummy.lookAt(jpCenterECEF.clone().sub(ln));
+    dummy.lookAt(centerECEF.clone().sub(ln));
     dummy.updateMatrixWorld(true);
     
     return dummy.matrixWorld.clone().invert();
-  }, []);
+  }, [lat, lon, alt]);
 
   return (
     <group matrix={inverseMatrix} matrixAutoUpdate={false} visible={isVisible}>
@@ -2149,7 +2149,12 @@ const ExpandedLandmarkPanel = ({ landmark, onClose, onStartDriving }: { landmark
   );
 };
 
-export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, cameraMode = 'map' }: { isShowFlights?: boolean, rainIntensity?: number, cameraMode?: 'map' | 'drone' }) => {
+export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, cameraMode = 'map', cityCenter }: { isShowFlights?: boolean, rainIntensity?: number, cameraMode?: 'map' | 'drone', cityCenter?: { id: string, lat: number, lon: number, alt: number, label: string } }) => {
+  const tilesLat = cityCenter?.lat ?? LAT_CENTER;
+  const tilesLon = cityCenter?.lon ?? LON_CENTER;
+  const tilesAlt = cityCenter?.alt ?? 880;
+  // Only show JP Nagar-specific data layers when the home city is selected
+  const isHomeCity = !cityCenter || cityCenter.id === 'jp-nagar';
   const [cityData, setCityData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [evStations, setEvStations] = useState<any[]>([]);
@@ -2323,7 +2328,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
       <div className="absolute top-2 left-0 w-full p-4 z-[500] pointer-events-none flex justify-between">
         <div>
           <div className="text-white/60 text-xs font-mono uppercase tracking-widest mt-1">
-            JP Nagar Infrastructure Node
+            {cityCenter?.label ?? 'JP Nagar Infrastructure Node'}
           </div>
 
           {loading && (
@@ -2333,8 +2338,8 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
             </div>
           )}
           
-          {/* ZONES NAVIGATION PANEL */}
-          {!isDriveMode && (
+          {/* ZONES NAVIGATION PANEL — JP Nagar only */}
+          {!isDriveMode && isHomeCity && (
             <div className="mt-4 pointer-events-auto relative z-[500]" style={{ width: zoneNavCollapsed ? 'auto' : '300px' }}>
               {zoneNavCollapsed ? (
                 /* Collapsed state: slim tab on the left edge */
@@ -2407,7 +2412,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
         </div>
       </div>
 
-      {!isDriveMode && (
+      {!isDriveMode && isHomeCity && (
         <button
           onClick={() => setIsDriveMode(true)}
           className="fixed bottom-3 left-3 bg-red-600 hover:bg-red-500 text-white font-bold px-8 py-3 rounded shadow-[0_0_20px_#dc2626] border border-red-400/50 z-50 animate-pulse tracking-widest uppercase transition-all"
@@ -2460,7 +2465,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
         </div>
       )}
 
-      {!isDriveMode && (
+      {!isDriveMode && isHomeCity && (
         <ExpandedLandmarkPanel
           landmark={expandedLandmark}
           onClose={() => setExpandedLandmark(null)}
@@ -2472,8 +2477,8 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
         />
       )}
 
-      {/* Power Grid Expanded Panel */}
-      {!isDriveMode && expandedGridNode && (
+      {/* Power Grid Expanded Panel — JP Nagar only */}
+      {!isDriveMode && isHomeCity && expandedGridNode && (
         <PowerGridExpandedPanel
           node={expandedGridNode}
           onClose={() => setExpandedGridNode(null)}
@@ -2512,31 +2517,33 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
 
         <group position={[0, -2, 0]}>
           <group position={[0, 32, 0]}>
-            <TilesEnvironment isVisible={!isCityTransparent} />
+            <TilesEnvironment isVisible={!isCityTransparent} lat={tilesLat} lon={tilesLon} alt={tilesAlt} />
           </group>
 
-          {/* Render Massive Mega-Mesh Map */}
-          {cityData && <MergedCityMap buildings={cityData.buildings} isTransparent={isCityTransparent} />}
+          {/* Render Massive Mega-Mesh Map — JP Nagar only */}
+          {isHomeCity && cityData && <MergedCityMap buildings={cityData.buildings} isTransparent={isCityTransparent} />}
           
-          {/* Interactive Roads Layer */}
-          {cityData && <RoadsLayer roads={cityData.roads} assetFilters={assetFilters} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} isTransparent={isCityTransparent} />}
+          {/* Interactive Roads Layer — JP Nagar only */}
+          {isHomeCity && cityData && <RoadsLayer roads={cityData.roads} assetFilters={assetFilters} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} isTransparent={isCityTransparent} />}
 
-          {/* Render Real Lakes */}
-          {cityData?.lakes && <LakesLayer lakes={cityData.lakes} />}
+          {/* Render Real Lakes — JP Nagar only */}
+          {isHomeCity && cityData?.lakes && <LakesLayer lakes={cityData.lakes} />}
 
-          {/* Render Landmarks UI */}
-          {cityData && <LandmarksLayer buildings={cityData.buildings} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} assetFilters={assetFilters} />}
+          {/* Render Landmarks UI — JP Nagar only */}
+          {isHomeCity && cityData && <LandmarksLayer buildings={cityData.buildings} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} assetFilters={assetFilters} />}
 
-          {/* Real Trees & Procedural Lush Forest */}
-          {cityData?.trees && <RealTrees trees={cityData.trees} isTransparent={isCityTransparent} />}
-          <DenseForest lakes={cityData?.lakes} isTransparent={isCityTransparent} />
+          {/* Real Trees & Procedural Lush Forest — JP Nagar only */}
+          {isHomeCity && cityData?.trees && <RealTrees trees={cityData.trees} isTransparent={isCityTransparent} />}
+          {isHomeCity && <DenseForest lakes={cityData?.lakes} isTransparent={isCityTransparent} />}
           
-          <ZonesLayer active={cityData != null} showZones={showZones} selectedPhase={selectedPhase} />
+          {/* Volumetric Zones — JP Nagar only */}
+          {isHomeCity && <ZonesLayer active={cityData != null} showZones={showZones} selectedPhase={selectedPhase} />}
 
-          {/* Streetlights — pass isNight to boost glow */}
-          {cityData?.roads && <StreetlightsLayer roads={cityData.roads} isNight={renderNight} />}
+          {/* Streetlights — JP Nagar only */}
+          {isHomeCity && cityData?.roads && <StreetlightsLayer roads={cityData.roads} isNight={renderNight} />}
 
-          {/* Project Nolan-Star Driving Features */}
+          {/* Project Nolan-Star Driving Features — JP Nagar only */}
+          {isHomeCity && (
           <DriveableVehicle
             active={isDriveMode}
             setSpeed={setSpeed}
@@ -2545,9 +2552,11 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
             startPos={startPos}
             telemetryRef={telemetryRef}
           />
+          )}
           <CinematicRain active={renderRain} intensity={rainIntensity} />
 
-          {/* Dynamic Infrastructure */}
+          {/* Dynamic Infrastructure — JP Nagar only */}
+          {isHomeCity && (
           <EVStationsLayer
             stations={evStations}
             roads={cityData?.roads}
@@ -2556,9 +2565,10 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
             focusedLandmark={focusedLandmark}
             assetFilters={assetFilters}
           />
+          )}
 
-          {/* EV Station Simulation Power Grid Layer */}
-          {isEvSim && cityData && (
+          {/* EV Station Simulation Power Grid Layer — JP Nagar only */}
+          {isHomeCity && isEvSim && cityData && (
             <EVSimulationLayer
               evStations={evStations}
               buildings={cityData.buildings}
@@ -2574,8 +2584,8 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
             />
           )}
 
-          {/* Dynamic Traffic Engine (hide if driving to avoid collision glitches) */}
-          {!isDriveMode && cityData?.roads && <TrafficEngine roads={cityData.roads} />}
+          {/* Dynamic Traffic Engine — JP Nagar only (hide if driving to avoid collision glitches) */}
+          {isHomeCity && !isDriveMode && cityData?.roads && <TrafficEngine roads={cityData.roads} />}
 
           {/* Dynamic Flight Engine */}
           {isShowFlights && <FlightEngine />}

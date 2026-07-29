@@ -1,9 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { RightPanel } from './components/RightPanel';
 import { BottomBar } from './components/BottomBar';
 import { SceneViewer } from './components/SceneViewer';
 import { CityStreetViewer } from './components/CityStreetViewer';
+import { ChevronDown, MapPin } from 'lucide-react';
+
+const CITIES = [
+  { id: 'jp-nagar', label: 'JP Nagar, Bengaluru', lat: 12.905, lon: 77.590, alt: 880 },
+  { id: 'helsinki', label: 'Helsinki, Finland', lat: 60.1666, lon: 24.9435, alt: 30 },
+  { id: 'new-york', label: 'New York, United States', lat: 40.7127, lon: -74.0060, alt: 10 },
+];
 
 function App() {
   const [activeView, setActiveView] = useState<'zeon' | 'city'>('city');
@@ -15,6 +22,19 @@ function App() {
   const [cameraMode, setCameraMode] = useState<'map' | 'drone'>('map');
   const [rainIntensity, setRainIntensity] = useState(5);
   const [assetCounts, setAssetCounts] = useState<any>({ apartments: 0, restaurants: 0, hospital: 0, evStations: 0, roads: 0 });
+  const [selectedCity, setSelectedCity] = useState(CITIES[0]);
+  const [cityDropdownOpen, setCityDropdownOpen] = useState(false);
+  const cityDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (cityDropdownRef.current && !cityDropdownRef.current.contains(e.target as Node)) {
+        setCityDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Listen for weather/sim events from CityStreetViewer
   useEffect(() => {
@@ -54,7 +74,7 @@ function App() {
       <div className="flex-1 flex flex-col h-full min-w-0">
         
         {/* Top Navigation / Header */}
-        <header className="h-14 border-b border-laip-border bg-laip-panel/80 backdrop-blur-md z-20 flex items-center px-6 justify-between shrink-0">
+        <header className="h-14 border-b border-laip-border bg-laip-panel/80 backdrop-blur-md z-[600] flex items-center px-6 justify-between shrink-0">
           <div className="flex items-center gap-6">
             {/* <div className="flex items-center gap-4">
               <span className="text-sm font-semibold tracking-widest text-gray-400">LAIP <span className="text-laip-cyan">v1.0.0</span></span>
@@ -114,16 +134,53 @@ function App() {
             )}
           </div>
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-xs">
-              <span className="w-2 h-2 rounded-full bg-laip-cyan shadow-[0_0_8px_#00f0ff]"></span>
-              <span className="text-gray-300">System Online</span>
+            {/* City Selector */}
+            <div className="relative" ref={cityDropdownRef}>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="w-2 h-2 rounded-full bg-laip-cyan shadow-[0_0_8px_#00f0ff]"></span>
+                <span className="text-gray-300">System Online</span>
+                <button
+                  onClick={() => setCityDropdownOpen(prev => !prev)}
+                  title="Switch city"
+                  className="cursor-pointer flex items-center gap-1 ml-1 px-2 py-1 rounded border border-white/10 bg-black/30 hover:bg-white/10 hover:border-white/30 text-gray-300 hover:text-white transition-all"
+                >
+                  <MapPin size={11} className="text-laip-cyan" />
+                  <span className="font-medium tracking-wide">{selectedCity.label}</span>
+                  <ChevronDown size={11} className={`transition-transform ${cityDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+              </div>
+              {/* Dropdown */}
+              {cityDropdownOpen && (
+                <div className="absolute right-0 top-full mt-2 w-56 bg-black/90 backdrop-blur-md border border-white/15 rounded-xl shadow-2xl overflow-hidden z-[999]">
+                  <div className="px-3 py-2 border-b border-white/10">
+                    <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">Select City</span>
+                  </div>
+                  {CITIES.map(city => (
+                    <button
+                      key={city.id}
+                      onClick={() => { setSelectedCity(city); setCityDropdownOpen(false); }}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-xs transition-colors ${
+                        selectedCity.id === city.id
+                          ? 'bg-laip-cyan/15 text-laip-cyan'
+                          : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      <MapPin size={12} className={selectedCity.id === city.id ? 'text-laip-cyan' : 'text-gray-500'} />
+                      <span className="font-medium">{city.label}</span>
+                      {selectedCity.id === city.id && (
+                        <span className="ml-auto text-[9px] bg-laip-cyan/20 text-laip-cyan px-1.5 py-0.5 rounded font-bold tracking-wider">ACTIVE</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </header>
 
         {/* 3D Scene — sits below the header, no absolute positioning */}
         <div className="flex-1 w-full min-h-0 relative overflow-hidden">
-          {activeView === 'zeon' ? <SceneViewer /> : <CityStreetViewer isShowFlights={isShowFlights} rainIntensity={rainIntensity} cameraMode={cameraMode} />}
+          {activeView === 'zeon' ? <SceneViewer /> : <CityStreetViewer isShowFlights={isShowFlights} rainIntensity={rainIntensity} cameraMode={cameraMode} cityCenter={selectedCity} />}
         </div>
         
         {/* Bottom Timeline Bar */}
