@@ -363,7 +363,7 @@ const MergedCityMap = ({ buildings }: { buildings: any[], isTransparent: boolean
         // Exclude specific known landmark towers from being flattened
         const isIconicTower = ["elita", "millennium", "south city", "palmsprings", "woodrose"].some(n => bName.includes(n));
 
-        if (((maxX - minX) > 200 || (maxZ - minZ) > 200) && !isIconicTower) {
+        if (((maxX - minX) > 120 || (maxZ - minZ) > 120) && !isIconicTower) {
           isMassiveBoundary = true;
         }
 
@@ -480,7 +480,7 @@ dashedLaneMaterial.onBeforeCompile = (shader) => {
 };
 
 const RoadsLayer = ({ roads, assetFilters, onFlyTo, onExpand, focusedLandmark }: any) => {
-  const isHighlightAll = assetFilters?.roads;
+  const isHighlightAll = assetFilters?.roads && (assetFilters?.masterVisible !== false);
   
   const roadMeshes = useMemo(() => {
     return roads.map((r: any) => {
@@ -2171,6 +2171,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const [selectedPhase, setSelectedPhase] = useState<any>(null);
   const [isDriveMode, setIsDriveMode] = useState(false);
   const [isCityTransparent, setIsCityTransparent] = useState(false);
+  const [cityOpacity, setCityOpacity] = useState(1.0);
   // EV Simulation state
   const [isEvSim, setIsEvSim] = useState(false);
   const [focusedGridNode, setFocusedGridNode] = useState<any>(null);
@@ -2199,22 +2200,21 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
       treeMaterial.opacity = op;
       roadMaterial.opacity = Math.min(1.0, op + 0.15); // roads slightly more opaque so they are visible
       
-      if (buildingMaterial.transparent !== isTrans) {
-         buildingMaterial.transparent = isTrans;
-         buildingMaterial.depthWrite = !isTrans;
-         buildingMaterial.needsUpdate = true;
-         
-         treeMaterial.transparent = isTrans;
-         treeMaterial.depthWrite = !isTrans;
-         treeMaterial.needsUpdate = true;
-         
-         roadMaterial.transparent = isTrans;
-         roadMaterial.depthWrite = !isTrans;
-         roadMaterial.needsUpdate = true;
-         
-         // Only trigger React re-render when crossing the transparency threshold to avoid lag
-         setIsCityTransparent(isTrans);
-      }
+      buildingMaterial.transparent = isTrans;
+      buildingMaterial.depthWrite = true;
+      buildingMaterial.needsUpdate = true;
+      
+      treeMaterial.transparent = isTrans;
+      treeMaterial.depthWrite = true;
+      treeMaterial.needsUpdate = true;
+      
+      roadMaterial.transparent = isTrans;
+      roadMaterial.depthWrite = true;
+      roadMaterial.needsUpdate = true;
+
+      // Update React state every change so TilesEnvironment hides properly
+      setCityOpacity(op);
+      setIsCityTransparent(isTrans);
     };
 
     window.addEventListener('laip-sim', handleSim);
@@ -2322,6 +2322,17 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const ambientIntensity = (renderNight ? 0.3 : (renderRain ? 0.5 : 0.6)) * dimFactor; // Boosted ambient light
   const dirIntensity = (renderNight ? 1.5 : (renderRain ? 0.8 : 1.0)) * dimFactor; // Bright moonlight
   const skyColor = renderNight ? "#050b14" : (renderRain ? "#475569" : "#e0f2fe"); // Deep realistic blue sky
+
+  const masterVisible = assetFilters?.masterVisible !== false;
+  const categoryFilters = assetFilters?.categoryFilters;
+  const anyCategorySelected = categoryFilters
+    ? (categoryFilters.buildings || categoryFilters.roads || categoryFilters.waterBodies)
+    : false;
+
+  const showBuildings = !anyCategorySelected || (categoryFilters?.buildings ?? false);
+  const showRoads = !anyCategorySelected || (categoryFilters?.roads ?? false);
+  const showWaterBodies = !anyCategorySelected || (categoryFilters?.waterBodies ?? false);
+  const showLandmarkPins = masterVisible && !anyCategorySelected;
 
   return (
     <div className="flex-1 relative w-full h-full" style={{ backgroundColor: skyColor }}>
@@ -2517,30 +2528,30 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
 
         <group position={[0, -2, 0]}>
           <group position={[0, 32, 0]}>
-            <TilesEnvironment isVisible={!isCityTransparent} lat={tilesLat} lon={tilesLon} alt={tilesAlt} />
+            <TilesEnvironment isVisible={cityOpacity >= 1.0 && !anyCategorySelected} lat={tilesLat} lon={tilesLon} alt={tilesAlt} />
           </group>
 
           {/* Render Massive Mega-Mesh Map — JP Nagar only */}
-          {isHomeCity && cityData && <MergedCityMap buildings={cityData.buildings} isTransparent={isCityTransparent} />}
+          {isHomeCity && cityData && showBuildings && <MergedCityMap buildings={cityData.buildings} isTransparent={isCityTransparent} />}
           
           {/* Interactive Roads Layer — JP Nagar only */}
-          {isHomeCity && cityData && <RoadsLayer roads={cityData.roads} assetFilters={assetFilters} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} isTransparent={isCityTransparent} />}
+          {isHomeCity && cityData && showRoads && <RoadsLayer roads={cityData.roads} assetFilters={assetFilters} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} isTransparent={isCityTransparent} />}
 
           {/* Render Real Lakes — JP Nagar only */}
-          {isHomeCity && cityData?.lakes && <LakesLayer lakes={cityData.lakes} />}
+          {isHomeCity && cityData?.lakes && showWaterBodies && <LakesLayer lakes={cityData.lakes} />}
 
           {/* Render Landmarks UI — JP Nagar only */}
-          {isHomeCity && cityData && <LandmarksLayer buildings={cityData.buildings} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} assetFilters={assetFilters} />}
+          {isHomeCity && cityData && showLandmarkPins && <LandmarksLayer buildings={cityData.buildings} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} assetFilters={assetFilters} />}
 
           {/* Real Trees & Procedural Lush Forest — JP Nagar only */}
-          {isHomeCity && cityData?.trees && <RealTrees trees={cityData.trees} isTransparent={isCityTransparent} />}
-          {isHomeCity && <DenseForest lakes={cityData?.lakes} isTransparent={isCityTransparent} />}
+          {isHomeCity && cityData?.trees && showWaterBodies && <RealTrees trees={cityData.trees} isTransparent={isCityTransparent} />}
+          {isHomeCity && showWaterBodies && <DenseForest lakes={cityData?.lakes} isTransparent={isCityTransparent} />}
           
           {/* Volumetric Zones — JP Nagar only */}
           {isHomeCity && <ZonesLayer active={cityData != null} showZones={showZones} selectedPhase={selectedPhase} />}
 
           {/* Streetlights — JP Nagar only */}
-          {isHomeCity && cityData?.roads && <StreetlightsLayer roads={cityData.roads} isNight={renderNight} />}
+          {isHomeCity && cityData?.roads && showRoads && <StreetlightsLayer roads={cityData.roads} isNight={renderNight} />}
 
           {/* Project Nolan-Star Driving Features — JP Nagar only */}
           {isHomeCity && (
@@ -2556,7 +2567,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
           <CinematicRain active={renderRain} intensity={rainIntensity} />
 
           {/* Dynamic Infrastructure — JP Nagar only */}
-          {isHomeCity && (
+          {isHomeCity && masterVisible && (
           <EVStationsLayer
             stations={evStations}
             roads={cityData?.roads}

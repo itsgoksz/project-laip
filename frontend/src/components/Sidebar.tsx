@@ -6,7 +6,7 @@ const TreeNode = ({ label, icon: Icon, children, defaultExpanded = false }: any)
 
   return (
     <div className="ml-2">
-      <div 
+      <div
         className="flex items-center p-2 rounded hover:bg-white/10 cursor-pointer text-sm transition-colors"
         onClick={() => setExpanded(!expanded)}
       >
@@ -31,8 +31,8 @@ const CollapsibleSection = ({ title, children, defaultExpanded = true, action }:
   const [expanded, setExpanded] = useState(defaultExpanded);
   return (
     <div className="mb-6">
-      <div 
-        className="flex items-center justify-between cursor-pointer group mb-3" 
+      <div
+        className="flex items-center justify-between cursor-pointer group mb-3"
         onClick={() => setExpanded(!expanded)}
       >
         <div className="flex items-center gap-2">
@@ -60,16 +60,28 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
     evStations: false,
     roads: false
   });
+  const [assetCategoryFilters, setAssetCategoryFilters] = useState({
+    buildings: false,
+    roads: false,
+    waterBodies: false
+  });
   const [cityTransparency, setCityTransparency] = useState(0);
 
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent('laip-asset-filter', { detail: { ...assetFilters, masterVisible } }));
-  }, [assetFilters, masterVisible]);
+    window.dispatchEvent(new CustomEvent('laip-asset-filter', { detail: { ...assetFilters, masterVisible, categoryFilters: assetCategoryFilters } }));
+  }, [assetFilters, masterVisible, assetCategoryFilters]);
 
   useEffect(() => {
     const opacity = 1.0 - (cityTransparency / 100);
     window.dispatchEvent(new CustomEvent('laip-city-opacity', { detail: { opacity } }));
   }, [cityTransparency]);
+
+  const handleCategoryFilterChange = (key: keyof typeof assetCategoryFilters) => {
+    setAssetCategoryFilters(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
 
   const handleFilterChange = (key: keyof typeof assetFilters) => {
     setAssetFilters(prev => {
@@ -122,7 +134,7 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
           </div>
         </div>
       </div>
-      
+
       <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
         {/* EV Power Grid Hierarchy — only visible when EV simulation is on */}
         {isEvSim && (
@@ -131,11 +143,10 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
               {/* Main Grid / Full View Row */}
               <div
                 onClick={() => selectGridBranch(null)}
-                className={`flex items-center gap-2 p-2 rounded cursor-pointer text-sm transition-all border mb-1 ${
-                  selectedGridBranch === null
-                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.2)]'
-                    : 'hover:bg-white/10 border-transparent text-gray-400'
-                }`}
+                className={`flex items-center gap-2 p-2 rounded cursor-pointer text-sm transition-all border mb-1 ${selectedGridBranch === null
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.2)]'
+                  : 'hover:bg-white/10 border-transparent text-gray-400'
+                  }`}
               >
                 <div className="flex items-center justify-center w-5 h-5 rounded bg-amber-500/20 shrink-0">
                   <Zap size={11} className="text-amber-400" />
@@ -159,11 +170,10 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
                   <div
                     key={i}
                     onClick={() => selectGridBranch(i)}
-                    className={`flex items-center gap-2 p-1.5 rounded cursor-pointer transition-all border ${
-                      selectedGridBranch === i
-                        ? 'bg-yellow-500/15 border-yellow-500/40 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.2)]'
-                        : 'hover:bg-white/10 border-transparent text-gray-400'
-                    }`}
+                    className={`flex items-center gap-2 p-1.5 rounded cursor-pointer transition-all border ${selectedGridBranch === i
+                      ? 'bg-yellow-500/15 border-yellow-500/40 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.2)]'
+                      : 'hover:bg-white/10 border-transparent text-gray-400'
+                      }`}
                   >
                     <div className="flex items-center justify-center w-4 h-4 rounded bg-yellow-500/20 shrink-0">
                       <Radio size={9} className="text-yellow-400" />
@@ -195,33 +205,54 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
         {/* Static Asset Hierarchy — hide when EV simulation is on */}
         {!isEvSim && (
           <CollapsibleSection title="Asset Hierarchy" defaultExpanded={false}>
-          <TreeNode label="HQ Campus" icon={Building2} defaultExpanded>
-            <TreeNode label="Building A" icon={Building2} defaultExpanded>
-              <TreeNode label="Floor 1" icon={Layers}>
-                <TreeNode label="Lobby HVAC" icon={Wind} />
-                <TreeNode label="Server Room AC" icon={Wind} />
+            <TreeNode label="HQ Campus" icon={Building2} defaultExpanded>
+              <TreeNode label="Building A" icon={Building2} defaultExpanded>
+                <TreeNode label="Floor 1" icon={Layers}>
+                  <TreeNode label="Lobby HVAC" icon={Wind} />
+                  <TreeNode label="Server Room AC" icon={Wind} />
+                </TreeNode>
+                <TreeNode label="Floor 2 (Labs)" icon={Layers} />
               </TreeNode>
-              <TreeNode label="Floor 2 (Labs)" icon={Layers} />
-            </TreeNode>
-            <TreeNode label="Parking Garage" icon={Building2} defaultExpanded>
-              <TreeNode label="Level G" icon={Layers} defaultExpanded>
-                <TreeNode label="EV Charger Station 1" icon={Cpu} />
-                <TreeNode label="EV Charger Station 2" icon={Cpu} />
-                <TreeNode label="EV Charger Station 3" icon={Cpu} />
+              <TreeNode label="Parking Garage" icon={Building2} defaultExpanded>
+                <TreeNode label="Level G" icon={Layers} defaultExpanded>
+                  <TreeNode label="EV Charger Station 1" icon={Cpu} />
+                  <TreeNode label="EV Charger Station 2" icon={Cpu} />
+                  <TreeNode label="EV Charger Station 3" icon={Cpu} />
+                </TreeNode>
               </TreeNode>
             </TreeNode>
-          </TreeNode>
           </CollapsibleSection>
         )}
 
-        <CollapsibleSection 
-          title="Assets" 
+        <CollapsibleSection title="Assets (show only selected)" defaultExpanded>
+          <div className="space-y-2.5 text-sm text-gray-300 ml-2">
+            {[
+              { id: 'buildings', label: 'Structural Buildings' },
+              { id: 'roads', label: 'Roads' },
+              { id: 'waterBodies', label: 'Water bodies' }
+            ].map(item => (
+              <label key={item.id} className="flex items-center gap-3 cursor-pointer group transition-colors ml-[32px] py-0.5">
+                <input
+                  type="checkbox"
+                  checked={assetCategoryFilters[item.id as keyof typeof assetCategoryFilters]}
+                  onChange={() => handleCategoryFilterChange(item.id as keyof typeof assetCategoryFilters)}
+                  className="w-4 h-4 appearance-none rounded-sm border border-white/20 bg-black/50 checked:bg-laip-cyan/20 checked:border-laip-cyan cursor-pointer transition-all relative flex items-center justify-center after:content-[''] checked:after:block after:hidden after:w-1.5 after:h-2.5 after:border-r-2 after:border-b-2 after:border-laip-cyan after:rotate-45 after:-mt-1 hover:border-white/40 shadow-[0_0_10px_rgba(0,240,255,0)] checked:shadow-[0_0_10px_rgba(0,240,255,0.3)]"
+                />
+                <span className="text-gray-400 group-hover:text-gray-200 transition-colors">{item.label}</span>
+              </label>
+            ))}
+          </div>
+        </CollapsibleSection>
+
+        {/* Assets Filters */}
+        <CollapsibleSection
+          title="Assets Filters"
           defaultExpanded
           action={
-            <button 
+            <button
               onClick={() => setMasterVisible(!masterVisible)}
-              className="text-gray-500 hover:text-laip-cyan transition-colors flex items-center justify-center ml-1"
-              title={masterVisible ? "Hide all assets" : "Show all assets"}
+              className="cursor-pointer text-gray-500 hover:text-laip-cyan transition-colors flex items-center justify-center ml-1"
+              title={masterVisible ? "Hide all assets filters" : "Show all assets filters"}
             >
               {masterVisible ? <Eye size={14} /> : <EyeOff size={14} />}
             </button>
@@ -237,8 +268,8 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
               { id: 'roads', label: 'Road Networks', count: assetCounts?.roads || 0 }
             ].map(item => (
               <label key={item.id} className="flex items-center gap-3 cursor-pointer group transition-colors ml-[32px] py-0.5">
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   checked={assetFilters[item.id as keyof typeof assetFilters]}
                   onChange={() => handleFilterChange(item.id as keyof typeof assetFilters)}
                   className="w-4 h-4 appearance-none rounded-sm border border-white/20 bg-black/50 checked:bg-laip-cyan/20 checked:border-laip-cyan cursor-pointer transition-all relative flex items-center justify-center after:content-[''] checked:after:block after:hidden after:w-1.5 after:h-2.5 after:border-r-2 after:border-b-2 after:border-laip-cyan after:rotate-45 after:-mt-1 hover:border-white/40 shadow-[0_0_10px_rgba(0,240,255,0)] checked:shadow-[0_0_10px_rgba(0,240,255,0.3)]"
@@ -252,9 +283,9 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
                 <span className="text-[11px] text-laip-cyan font-medium uppercase tracking-wider">City Transparency</span>
                 <span className="text-[11px] text-gray-400 font-mono">{cityTransparency}%</span>
               </div>
-              <input 
-                type="range" 
-                min="0" max="100" 
+              <input
+                type="range"
+                min="0" max="100"
                 value={cityTransparency}
                 onChange={(e) => setCityTransparency(parseInt(e.target.value))}
                 className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-laip-cyan"
@@ -265,25 +296,23 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
 
         <CollapsibleSection title="Simulations" defaultExpanded>
           <div className="space-y-1">
-            <button 
+            <button
               onClick={() => window.dispatchEvent(new CustomEvent('laip-sim', { detail: { type: 'toggle-rain' } }))}
-              className={`w-full flex items-center p-2 rounded text-sm transition-all border cursor-pointer ${
-                isRain 
-                  ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300 shadow-[0_0_10px_rgba(34,211,238,0.3)]' 
-                  : 'hover:bg-white/10 border-transparent text-gray-200'
-              }`}
+              className={`w-full flex items-center p-2 rounded text-sm transition-all border cursor-pointer ${isRain
+                ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300 shadow-[0_0_10px_rgba(34,211,238,0.3)]'
+                : 'hover:bg-white/10 border-transparent text-gray-200'
+                }`}
             >
               <CloudRain size={16} className={`mr-3 ${isRain ? 'text-cyan-400' : 'text-cyan-400/60'}`} />
               <span>Rain Simulation</span>
               {isRain && <span className="ml-auto text-[10px] font-bold text-cyan-400 uppercase tracking-wider">ON</span>}
             </button>
-            <button 
+            <button
               onClick={() => window.dispatchEvent(new CustomEvent('laip-sim', { detail: { type: 'toggle-night' } }))}
-              className={`w-full flex items-center p-2 rounded text-sm transition-all border cursor-pointer ${
-                isNight 
-                  ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300 shadow-[0_0_10px_rgba(99,102,241,0.3)]' 
-                  : 'hover:bg-white/10 border-transparent text-gray-200'
-              }`}
+              className={`w-full flex items-center p-2 rounded text-sm transition-all border cursor-pointer ${isNight
+                ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300 shadow-[0_0_10px_rgba(99,102,241,0.3)]'
+                : 'hover:bg-white/10 border-transparent text-gray-200'
+                }`}
             >
               <Moon size={16} className={`mr-3 ${isNight ? 'text-indigo-400' : 'text-indigo-400/60'}`} />
               <span>Night View</span>
@@ -294,7 +323,7 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
 
         <CollapsibleSection title="Simulation Use Cases" defaultExpanded>
           <div className="space-y-1">
-            <button 
+            <button
               onClick={() => {
                 const nextState = !isEvSim;
                 window.dispatchEvent(new CustomEvent('laip-ev-sim', { detail: { type: 'toggle-ev-sim' } }));
@@ -310,11 +339,10 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
                   });
                 }
               }}
-              className={`w-full flex items-center p-2 rounded text-sm transition-all border cursor-pointer ${
-                isEvSim 
-                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.3)]' 
-                  : 'hover:bg-white/10 border-transparent text-gray-200'
-              }`}
+              className={`w-full flex items-center p-2 rounded text-sm transition-all border cursor-pointer ${isEvSim
+                ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.3)]'
+                : 'hover:bg-white/10 border-transparent text-gray-200'
+                }`}
             >
               <EvCharger size={16} className={`mr-3 ${isEvSim ? 'text-amber-400' : 'text-amber-400/60'}`} />
               <span>EV Station Simulation</span>
