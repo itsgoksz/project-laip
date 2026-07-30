@@ -16,6 +16,6 @@ try:
     else:
         print("Response:", data)
 except Exception as e:
-    print("Could not parse JSON. Exception:", e)
+    print("Could not parse JSON. Exception:", e)  #comments
     print("Text:", response.text[:500])
 
