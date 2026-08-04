@@ -10,6 +10,7 @@ const CITIES = [
   { id: 'jp-nagar', label: 'JP Nagar, Bengaluru', lat: 12.905, lon: 77.590, alt: 880 },
   { id: 'helsinki', label: 'Helsinki, Finland', lat: 60.1666, lon: 24.9435, alt: 30 },
   { id: 'new-york', label: 'New York, United States', lat: 40.7127, lon: -74.0060, alt: 10 },
+  { id: 'monte-carlo', label: 'Monte Carlo, Monaco', lat: 43.7403, lon: 7.4266, alt: 50 },
 ];
 
 function App() {
