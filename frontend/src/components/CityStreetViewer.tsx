@@ -2500,6 +2500,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
         <color attach="background" args={[skyColor]} />
 
         <Sky
+          distance={450000}
           sunPosition={sunPos as [number, number, number]}
           turbidity={renderRain ? 3 : 0.2}
           rayleigh={renderNight ? 0.1 : (renderRain ? 2 : 0.5)}
