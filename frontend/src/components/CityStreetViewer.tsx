@@ -2375,16 +2375,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
           }
           
           next[st.id] = stMetrics;
-          totalActive += stMetrics.activeCars.length;
-          totalLoad += stMetrics.activeCars.length * 50; 
         });
-
-        window.dispatchEvent(new CustomEvent('laip-ev-sim-metrics', {
-          detail: {
-            gridMW: 15.2 + (totalLoad / 1000),
-            activePercentage: totalCapacity > 0 ? (totalActive / totalCapacity) * 100 : 0
-          }
-        }));
 
         return next;
       });
@@ -2392,6 +2383,32 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
 
     return () => clearInterval(interval);
   }, [evStations]);
+
+  // Dispatch global EV metrics when station metrics change
+  useEffect(() => {
+    let totalActive = 0;
+    let totalLoad = 0;
+    let totalCapacity = 0;
+
+    evStations.forEach(st => {
+      const numChargers = Math.max(1, Math.min(4, Math.floor(st.power / 25)));
+      totalCapacity += numChargers;
+      const stMetrics = stationMetrics[st.id];
+      if (stMetrics) {
+        totalActive += stMetrics.activeCars.length;
+        totalLoad += stMetrics.activeCars.length * 50;
+      }
+    });
+
+    if (totalCapacity > 0) {
+      window.dispatchEvent(new CustomEvent('laip-ev-sim-metrics', {
+        detail: {
+          gridMW: 15.2 + (totalLoad / 1000),
+          activePercentage: (totalActive / totalCapacity) * 100
+        }
+      }));
+    }
+  }, [stationMetrics, evStations]);
 
   const [focusedGridNode, setFocusedGridNode] = useState<any>(null);
   const [expandedGridNode, setExpandedGridNode] = useState<any>(null);
