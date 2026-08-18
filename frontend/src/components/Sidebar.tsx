@@ -58,7 +58,8 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
     restaurants: false,
     hospital: false,
     evStations: false,
-    roads: false
+    roads: false,
+    traffic: true
   });
   const [assetCategoryFilters, setAssetCategoryFilters] = useState({
     buildings: false,
@@ -86,7 +87,7 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
   const handleFilterChange = (key: keyof typeof assetFilters) => {
     setAssetFilters(prev => {
       if (key === 'all') {
-        return { all: true, apartments: false, restaurants: false, hospital: false, evStations: false, roads: false };
+        return { all: true, apartments: false, restaurants: false, hospital: false, evStations: false, roads: false, traffic: true };
       } else {
         const next = { ...prev, [key]: !prev[key], all: false };
         const anyTrue = Object.entries(next).some(([k, v]) => k !== 'all' && v);
@@ -113,7 +114,7 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
   }, [isEvSim]);
 
   return (
-    <div className="w-72 border-r border-laip-border bg-laip-panel p-4 flex flex-col h-full shrink-0 z-10 backdrop-blur-md">
+    <div className="w-full h-full bg-black/40 backdrop-blur-2xl border border-white/10 rounded-[2rem] p-5 flex flex-col pointer-events-auto overflow-y-auto shadow-2xl custom-scrollbar">
       <div className="mb-6 flex items-center gap-3">
         <div className="w-10 h-10 rounded-lg bg-laip-cyan/10 flex items-center justify-center border border-laip-cyan/30 shadow-[0_0_15px_rgba(0,240,255,0.2)]">
           <Building2 size={20} className="text-laip-cyan" />
@@ -260,12 +261,13 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
         >
           <div className="space-y-2.5 text-sm text-gray-300 ml-2">
             {[
-              { id: 'all', label: 'All', count: assetCounts ? (assetCounts.apartments + assetCounts.restaurants + assetCounts.hospital + assetCounts.evStations + (assetCounts.roads || 0)) : 0 },
+              { id: 'all', label: 'All', count: assetCounts ? (assetCounts.apartments + assetCounts.restaurants + assetCounts.hospital + assetCounts.evStations + (assetCounts.roads || 0) + (assetCounts.traffic || 0)) : 0 },
               { id: 'apartments', label: 'Apartments', count: assetCounts?.apartments || 0 },
               { id: 'restaurants', label: 'Restaurants', count: assetCounts?.restaurants || 0 },
               { id: 'hospital', label: 'Hospital', count: assetCounts?.hospital || 0 },
               { id: 'evStations', label: 'EV Stations', count: assetCounts?.evStations || 0 },
-              { id: 'roads', label: 'Road Networks', count: assetCounts?.roads || 0 }
+              { id: 'roads', label: 'Road Networks', count: assetCounts?.roads || 0 },
+              { id: 'traffic', label: 'Traffic Flow', count: assetCounts?.traffic || 0 }
             ].map(item => (
               <label key={item.id} className="flex items-center gap-3 cursor-pointer group transition-colors ml-[32px] py-0.5">
                 <input
@@ -335,7 +337,8 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
                     restaurants: false,
                     hospital: false,
                     evStations: true,
-                    roads: false
+                    roads: false,
+                    traffic: false
                   });
                 }
               }}

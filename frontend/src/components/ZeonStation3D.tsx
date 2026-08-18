@@ -1,10 +1,33 @@
-// React is auto-imported by the JSX transform
-// import React from 'react';
-import { Box, Cylinder, Text } from '@react-three/drei';
+import React, { useState } from 'react';
+import { Box, Cylinder, Text, Edges } from '@react-three/drei';
 
-export const ZeonCharger = ({ position }: { position: [number, number, number] }) => {
+export const ZeonCharger = ({ position, data, onClick }: { position: [number, number, number], data?: any, onClick?: () => void }) => {
+  const [hovered, setHovered] = useState(false);
+
   return (
-    <group position={position} scale={[0.8, 0.8, 0.8]}>
+    <group 
+      position={position} 
+      scale={[0.8, 0.8, 0.8]}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (onClick) onClick();
+      }}
+      onPointerOver={(e) => { e.stopPropagation(); setHovered(true); document.body.style.cursor = 'pointer'; }}
+      onPointerOut={(e) => { setHovered(false); document.body.style.cursor = 'auto'; }}
+    >
+      {/* Interactive Cyber Bounding Box */}
+      <mesh visible={false} position={[0, 1.1, 0]}>
+         <boxGeometry args={[1.4, 2.5, 1.2]} />
+      </mesh>
+      
+      {hovered && (
+        <mesh position={[0, 1.1, 0]}>
+          <boxGeometry args={[1.4, 2.5, 1.2]} />
+          <Edges color="#00f0ff" linewidth={4} threshold={15} />
+          <meshBasicMaterial transparent opacity={0.1} color="#00f0ff" depthWrite={false} />
+        </mesh>
+      )}
+
       {/* Main Body */}
       <Box args={[0.8, 2.2, 0.6]} position={[0, 1.1, 0]} castShadow receiveShadow>
         <meshStandardMaterial color="#151618" roughness={0.6} metalness={0.3} />
@@ -244,18 +267,22 @@ export const ZeonHubModel = ({
   position = [0, 0, 0], 
   rotation = [0, 0, 0], 
   scale = [1, 1, 1],
-  numChargers = 3
+  numChargers = 3,
+  data,
+  onChargerClick
 }: { 
   position?: [number, number, number], 
   rotation?: [number, number, number],
   scale?: [number, number, number],
-  numChargers?: number
+  numChargers?: number,
+  data?: any,
+  onChargerClick?: (data: any) => void
 }) => {
   const chargers = [];
   const startX = -((numChargers - 1) * 3) / 2;
   
   for (let i = 0; i < numChargers; i++) {
-    chargers.push(<ZeonCharger key={i} position={[startX + i * 3, 0, 1]} />);
+    chargers.push(<ZeonCharger key={i} position={[startX + i * 3, 0, 1]} data={data} onClick={() => onChargerClick && onChargerClick(data)} />);
   }
 
   const signPosX = -((Math.max(1, numChargers) * 4.5 + 4) / 2) - 1.5;

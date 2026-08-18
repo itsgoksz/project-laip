@@ -99,7 +99,7 @@ export const RightPanel = ({ isNight, isRain, isEvSim, rainIntensity, cameraMode
   const isBuildingDim = transparency > 50;
 
   return (
-    <div className="w-80 border-l border-laip-border bg-laip-panel p-4 flex flex-col h-full shrink-0 z-10 backdrop-blur-md">
+    <div className="w-full h-full bg-black/40 backdrop-blur-2xl border border-white/10 rounded-[2rem] p-5 flex flex-col pointer-events-auto shadow-2xl">
       <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-6 pr-2">
 
         {/* Telemetry Section */}

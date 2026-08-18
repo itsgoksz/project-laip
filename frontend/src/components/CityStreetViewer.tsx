@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { SemanticAssetPanel } from './SemanticAssetPanel';
 import { OrbitControls, Environment, Html, Sky, FlyControls } from '@react-three/drei';
 import { EffectComposer, N8AO, Bloom, Vignette, ToneMapping, DepthOfField } from '@react-three/postprocessing';
 import { ToneMappingMode } from 'postprocessing';
@@ -10,7 +11,8 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { Building2, Zap, Radio, ChevronsRight, ChevronsLeft } from 'lucide-react';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { Building2, Zap, Radio, ChevronsRight, ChevronsLeft, Download } from 'lucide-react';
 import { ZeonHubModel } from './ZeonStation3D';
 import { RoadGraph } from '../utils/pathfinding';
 // ==========================================
@@ -32,14 +34,14 @@ export const JPNagarPhases = [
 ].map((p, index) => {
   const x = (p.lon - LON_CENTER) * 111320 * Math.cos(LAT_CENTER * Math.PI / 180);
   const z = (LAT_CENTER - p.lat) * 111000;
-  
+
   // Create a localized shape boundary for the zone
   const shape = new THREE.Shape();
   const numPoints = 7 + (index % 3); // 7 to 9 points
   const radius = 350 + (index * 20); // roughly 350-500 meters
   for (let i = 0; i < numPoints; i++) {
     const angle = (i / numPoints) * Math.PI * 2;
-    const r = radius * (0.7 + Math.abs(Math.sin(index * 13.5 + i * 21.7)) * 0.4); 
+    const r = radius * (0.7 + Math.abs(Math.sin(index * 13.5 + i * 21.7)) * 0.4);
     const px = Math.cos(angle) * r;
     const py = Math.sin(angle) * r; // Z in 3D
     if (i === 0) shape.moveTo(px, py);
@@ -47,7 +49,7 @@ export const JPNagarPhases = [
   }
   const r0 = radius * (0.7 + Math.abs(Math.sin(index * 13.5)) * 0.4);
   shape.lineTo(Math.cos(0) * r0, Math.sin(0) * r0);
-  
+
   const shapeGeo = new THREE.ShapeGeometry(shape);
   const edgesGeo = new THREE.EdgesGeometry(shapeGeo);
 
@@ -143,8 +145,8 @@ const POWER_SUBSTATIONS = [
 
 // --- Static Geometry Components ---
 
-class TilesErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean}> {
-  constructor(props: {children: React.ReactNode}) {
+class TilesErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode }) {
     super(props);
     this.state = { hasError: false };
   }
@@ -165,11 +167,11 @@ class TilesErrorBoundary extends React.Component<{children: React.ReactNode}, {h
 }
 
 export function wgs84ToECEF(lat: number, lon: number, alt: number): THREE.Vector3 {
-  const a = 6378137.0; 
+  const a = 6378137.0;
   const eSq = 0.00669437999014;
   const latRad = THREE.MathUtils.degToRad(lat);
   const lonRad = THREE.MathUtils.degToRad(lon);
-  
+
   const sinLat = Math.sin(latRad);
   const cosLat = Math.cos(latRad);
   const sinLon = Math.sin(lonRad);
@@ -180,13 +182,13 @@ export function wgs84ToECEF(lat: number, lon: number, alt: number): THREE.Vector
   const x = (N + alt) * cosLat * cosLon;
   const y = (N + alt) * cosLat * sinLon;
   const z = (N * (1 - eSq) + alt) * sinLat;
-  
+
   return new THREE.Vector3(x, y, z);
 }
 
 const TilesEnvironment = ({ isVisible, lat, lon, alt }: { isVisible: boolean, lat: number, lon: number, alt: number }) => {
   const gl = useThree(state => state.gl);
-  
+
   const dracoLoader = useMemo(() => {
     const loader = new DRACOLoader();
     loader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
@@ -209,13 +211,13 @@ const TilesEnvironment = ({ isVisible, lat, lon, alt }: { isVisible: boolean, la
     const upVector = centerECEF.clone().normalize();
     const northPole = new THREE.Vector3(0, 0, 1);
     const ln = northPole.clone().sub(upVector.clone().multiplyScalar(northPole.dot(upVector))).normalize();
-    
+
     const dummy = new THREE.Object3D();
     dummy.position.copy(centerECEF);
     dummy.up.copy(upVector);
     dummy.lookAt(centerECEF.clone().sub(ln));
     dummy.updateMatrixWorld(true);
-    
+
     return dummy.matrixWorld.clone().invert();
   }, [lat, lon, alt]);
 
@@ -481,7 +483,7 @@ dashedLaneMaterial.onBeforeCompile = (shader) => {
 
 const RoadsLayer = ({ roads, assetFilters, onFlyTo, onExpand, focusedLandmark }: any) => {
   const isHighlightAll = assetFilters?.roads && (assetFilters?.masterVisible !== false);
-  
+
   const roadMeshes = useMemo(() => {
     return roads.map((r: any) => {
       if (r.line.length < 2) return null;
@@ -489,7 +491,7 @@ const RoadsLayer = ({ roads, assetFilters, onFlyTo, onExpand, focusedLandmark }:
         const pts = r.line.map((pt: number[]) => new THREE.Vector3(pt[0], 0.2, pt[1]));
         const path = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.1);
         const isPrimary = r.type === "primary" || r.type === "secondary" || r.type === "trunk";
-        
+
         const geo = new THREE.TubeGeometry(path, r.line.length * 4, isPrimary ? 6 : 3.5, 4, false);
         geo.scale(1, 0.05, 1);
         geo.translate(0, 0.2, 0);
@@ -534,9 +536,9 @@ const RoadsLayer = ({ roads, assetFilters, onFlyTo, onExpand, focusedLandmark }:
       {roadMeshes.map((m: any) => {
         const isSelected = focusedLandmark?.id === m.id;
         const mat = isSelected ? roadMaterialSelected : (isHighlightAll ? roadMaterialHighlighted : roadMaterial);
-        
+
         return (
-          <group 
+          <group
             key={m.id}
             onClick={(e) => {
               e.stopPropagation();
@@ -592,20 +594,20 @@ const CameraController = ({ targetPos, onArrived }: { targetPos: THREE.Vector3 |
 // --- Volumetric Zones Layer ---
 const ZonesLayer = ({ active, showZones, selectedPhase }: { active: boolean, showZones: boolean, selectedPhase: any }) => {
   if (!active || !showZones) return null;
-  
+
   return (
     <group>
       {JPNagarPhases.map((phase, i) => {
         const isSelected = selectedPhase?.name === phase.name;
         const opacity = isSelected ? 0.35 : 0.08;
-        
+
         return (
           <group key={i} position={[phase.center[0], 0, phase.center[1]]}>
             {/* The Polygon */}
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.5, 0]} geometry={phase.shapeGeo}>
               <meshBasicMaterial color={phase.color} transparent opacity={opacity} depthWrite={false} side={THREE.DoubleSide} />
             </mesh>
-            
+
             {/* The Boundary Line */}
             <lineSegments rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.51, 0]} geometry={phase.edgesGeo}>
               <lineBasicMaterial color={phase.color} transparent opacity={isSelected ? 1.0 : 0.4} linewidth={isSelected ? 3 : 1} />
@@ -624,8 +626,8 @@ const ZonesLayer = ({ active, showZones, selectedPhase }: { active: boolean, sho
                     ZONE BOUNDARY
                   </div>
                 </div>
-                <div 
-                  className={`w-[2px] h-24 mt-0.5 ${isSelected ? 'animate-pulse' : ''}`} 
+                <div
+                  className={`w-[2px] h-24 mt-0.5 ${isSelected ? 'animate-pulse' : ''}`}
                   style={{ background: `linear-gradient(to bottom, ${phase.color}${isSelected ? 'ff' : 'cc'}, transparent)`, filter: `drop-shadow(0 0 5px ${phase.color})` }}
                 ></div>
               </div>
@@ -834,18 +836,12 @@ const PowerGridExpandedPanel = ({ node, onClose }: { node: any, onClose: () => v
   );
 };
 
-// Animated electricity flow along a curve
+// Animated electricity flow along a curve using a GPU Shader
 const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: THREE.Vector3[], color: string, particleColor: string, isHub: boolean }) => {
-  const particleRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const PARTICLE_COUNT = 18;
-  const offsets = useMemo(() => Array.from({ length: PARTICLE_COUNT }, (_, i) => i / PARTICLE_COUNT), []);
-  const progressRef = useRef<Float32Array>(new Float32Array(PARTICLE_COUNT).map((_, i) => i / PARTICLE_COUNT));
-  const tubeRef = useRef<THREE.Mesh>(null);
+  const shaderRef = useRef<THREE.ShaderMaterial>(null);
 
   const curve = useMemo(() => {
     if (points.length < 2) return null;
-
-    // Use the actual path points
     return new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.1);
   }, [points, isHub]);
 
@@ -860,30 +856,51 @@ const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: 
   }, [curve, isHub]);
 
   useFrame((_, delta) => {
-    if (!curve) return;
-    const speed = isHub ? 0.18 : 0.28;
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      progressRef.current[i] = (progressRef.current[i] + speed * delta) % 1.0;
-      const mesh = particleRefs.current[i];
-      if (mesh) {
-        const pt = curve.getPointAt(progressRef.current[i]);
-        mesh.position.copy(pt);
-      }
+    if (shaderRef.current) {
+      shaderRef.current.uniforms.uTime.value += delta * (isHub ? 1.5 : 2.5);
     }
   });
+
+  const uniforms = useMemo(() => ({
+    uTime: { value: 0 },
+    uColor: { value: new THREE.Color(color) },
+    uPulseColor: { value: new THREE.Color(particleColor) },
+  }), [color, particleColor]);
 
   if (!curve || !tubeGeo) return null;
 
   return (
     <group>
-      {/* Glowing pipe */}
-      <mesh ref={tubeRef} geometry={tubeGeo}>
-        <meshStandardMaterial
-          color={color}
-          emissive={color}
-          emissiveIntensity={isHub ? 2.5 : 1.8}
+      {/* Glowing Shader Pipe */}
+      <mesh geometry={tubeGeo}>
+        <shaderMaterial
+          ref={shaderRef}
+          uniforms={uniforms}
+          vertexShader={`
+            varying vec2 vUv;
+            void main() {
+              vUv = uv;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `}
+          fragmentShader={`
+            uniform float uTime;
+            uniform vec3 uColor;
+            uniform vec3 uPulseColor;
+            varying vec2 vUv;
+            
+            void main() {
+              // vUv.x runs along the length of the TubeGeometry
+              float pulse = fract(vUv.x * 15.0 - uTime);
+              pulse = smoothstep(0.7, 1.0, pulse);
+              
+              vec3 finalColor = mix(uColor, uPulseColor, pulse);
+              float alpha = mix(0.3, 0.9, pulse);
+              
+              gl_FragColor = vec4(finalColor, alpha);
+            }
+          `}
           transparent
-          opacity={isHub ? 0.65 : 0.55}
           depthWrite={false}
           depthTest={false}
           blending={THREE.AdditiveBlending}
@@ -903,27 +920,6 @@ const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: 
           />
         </mesh>
       )}
-
-      {/* Flowing electricity particles */}
-      {offsets.map((_, i) => (
-        <mesh
-          key={i}
-          ref={el => { particleRefs.current[i] = el; }}
-        >
-          <sphereGeometry args={[isHub ? 2.5 : 1.8, 6, 6]} />
-          <meshStandardMaterial
-            color={particleColor}
-            emissive={particleColor}
-            emissiveIntensity={isHub ? 12 : 8}
-            transparent
-            opacity={0.9}
-            depthWrite={false}
-            depthTest={false}
-            blending={THREE.AdditiveBlending}
-            toneMapped={false}
-          />
-        </mesh>
-      ))}
     </group>
   );
 };
@@ -1005,7 +1001,27 @@ const EVSimulationLayer = ({ evStations, buildings, roads, onFlyTo, onExpand, fo
 
   if (!hub) return null;
 
-  const hubPos = new THREE.Vector3(hub.center[0], 12, hub.center[1]);
+  // Precompute paths to avoid running Dijkstra on every render frame
+  const { hubPaths, evPaths } = useMemo(() => {
+    if (!hub || !roadGraph) return { hubPaths: [], evPaths: [] };
+    
+    const hPos = new THREE.Vector3(hub.center[0], 12, hub.center[1]);
+    const hPaths = substations.map(sub => {
+      const path = roadGraph.findShortestPath(hPos.x, hPos.z, sub.center[0], sub.center[1]);
+      return path.map((p: any) => new THREE.Vector3(p.x, -2, p.z));
+    });
+
+    const ePaths = substations.map((sub, i) => {
+      const myEVStations = evStations.filter(ev => evToSubMap[ev.id] === i);
+      const subPos = new THREE.Vector3(sub.center[0], 12, sub.center[1]);
+      return myEVStations.map(ev => {
+        const path = roadGraph.findShortestPath(subPos.x, subPos.z, ev.center[0], ev.center[1]);
+        return path.map((p: any) => new THREE.Vector3(p.x, -2, p.z));
+      });
+    });
+
+    return { hubPaths: hPaths, evPaths: ePaths };
+  }, [hub, substations, evStations, roadGraph, evToSubMap]);
 
   return (
     <group>
@@ -1027,9 +1043,9 @@ const EVSimulationLayer = ({ evStations, buildings, roads, onFlyTo, onExpand, fo
       </group>
 
       {/* Hub → Sub-Station pipelines */}
-      {substations.map((sub) => {
-        const path = roadGraph.findShortestPath(hubPos.x, hubPos.z, sub.center[0], sub.center[1]);
-        const undergroundPath = path.map(p => new THREE.Vector3(p.x, -2, p.z));
+      {substations.map((sub, i) => {
+        const undergroundPath = hubPaths[i];
+        if (!undergroundPath || undergroundPath.length < 2) return null;
         return (
           <ElectricityPipeline
             key={`hub-${sub.id}`}
@@ -1067,9 +1083,9 @@ const EVSimulationLayer = ({ evStations, buildings, roads, onFlyTo, onExpand, fo
             </group>
 
             {/* Sub-Station → EV Station pipelines */}
-            {myEVStations.map(ev => {
-              const path = roadGraph.findShortestPath(subPos.x, subPos.z, ev.center[0], ev.center[1]);
-              const undergroundPath = path.map(p => new THREE.Vector3(p.x, -2, p.z));
+            {myEVStations.map((ev, evIdx) => {
+              const undergroundPath = evPaths[subIdx]?.[evIdx];
+              if (!undergroundPath || undergroundPath.length < 2) return null;
               return (
                 <ElectricityPipeline
                   key={`sub-${sub.id}-ev-${ev.id}`}
@@ -1090,76 +1106,76 @@ const EVSimulationLayer = ({ evStations, buildings, roads, onFlyTo, onExpand, fo
 const EVStationsLayer = ({ stations, roads, onFlyTo, onExpand, focusedLandmark, assetFilters }: { stations: any[], roads?: any[], onFlyTo: (st: any) => void, onExpand: (st: any) => void, focusedLandmark: any, assetFilters?: any }) => {
   const visibleStations = useMemo(() => {
     if (!assetFilters || assetFilters.all || assetFilters.evStations) {
-       return stations.map(st => {
-         if (!roads || roads.length === 0) return { ...st, renderPos: st.center, rotation: 0 };
-         
-         let minDist = Infinity;
-         let bestPt = st.center;
-         let bestNormal = [1, 0];
-         
-         // Find closest point on any road segment
-         roads.forEach(r => {
-           if (r.line && r.line.length >= 2) {
-             for (let i = 0; i < r.line.length - 1; i++) {
-               const p1 = r.line[i];
-               const p2 = r.line[i+1];
-               
-               const vx = p2[0] - p1[0];
-               const vy = p2[1] - p1[1];
-               const lenSq = vx*vx + vy*vy;
-               if (lenSq === 0) continue;
-               
-               // Project st.center onto p1->p2
-               const t = Math.max(0, Math.min(1, ((st.center[0] - p1[0]) * vx + (st.center[1] - p1[1]) * vy) / lenSq));
-               
-               // Closest point on segment
-               const cx = p1[0] + t * vx;
-               const cy = p1[1] + t * vy;
-               
-               const dist = Math.hypot(st.center[0] - cx, st.center[1] - cy);
-               
-               if (dist < minDist) {
-                 minDist = dist;
-                 bestPt = [cx, cy];
-                 
-                 // Normal vector (normalized)
-                 const len = Math.sqrt(lenSq);
-                 // We have two normals: (-vy, vx) and (vy, -vx). 
-                 // Pick the one that points TOWARDS the station's original position, 
-                 // or if it's exactly on the road, just pick one.
-                 let nx = -vy / len;
-                 let ny = vx / len;
-                 
-                 // If station is not exactly on the line, ensure normal points to the side where the station is
-                 if (dist > 0.1) {
-                   const sx = st.center[0] - cx;
-                   const sy = st.center[1] - cy;
-                   if (nx * sx + ny * sy < 0) {
-                     nx = -nx;
-                     ny = -ny;
-                   }
-                 }
-                 
-                 bestNormal = [nx, ny];
-               }
-             }
-           }
-         });
-         
-         // Place exactly 9.0 units away from road center along the normal
-         const renderPos = [
-           bestPt[0] + bestNormal[0] * 9.0,
-           bestPt[1] + bestNormal[1] * 9.0
-         ];
-         
-         // Rotate to face the road. 
-         // If normal is (nx, ny) pointing FROM road TO station,
-         // The vector from station TO road is (-nx, -ny).
-         // atan2 takes (x, z) meaning (x, y) here.
-         const rotation = Math.atan2(-bestNormal[0], -bestNormal[1]);
-         
-         return { ...st, renderPos, rotation };
-       });
+      return stations.map(st => {
+        if (!roads || roads.length === 0) return { ...st, renderPos: st.center, rotation: 0 };
+
+        let minDist = Infinity;
+        let bestPt = st.center;
+        let bestNormal = [1, 0];
+
+        // Find closest point on any road segment
+        roads.forEach(r => {
+          if (r.line && r.line.length >= 2) {
+            for (let i = 0; i < r.line.length - 1; i++) {
+              const p1 = r.line[i];
+              const p2 = r.line[i + 1];
+
+              const vx = p2[0] - p1[0];
+              const vy = p2[1] - p1[1];
+              const lenSq = vx * vx + vy * vy;
+              if (lenSq === 0) continue;
+
+              // Project st.center onto p1->p2
+              const t = Math.max(0, Math.min(1, ((st.center[0] - p1[0]) * vx + (st.center[1] - p1[1]) * vy) / lenSq));
+
+              // Closest point on segment
+              const cx = p1[0] + t * vx;
+              const cy = p1[1] + t * vy;
+
+              const dist = Math.hypot(st.center[0] - cx, st.center[1] - cy);
+
+              if (dist < minDist) {
+                minDist = dist;
+                bestPt = [cx, cy];
+
+                // Normal vector (normalized)
+                const len = Math.sqrt(lenSq);
+                // We have two normals: (-vy, vx) and (vy, -vx). 
+                // Pick the one that points TOWARDS the station's original position, 
+                // or if it's exactly on the road, just pick one.
+                let nx = -vy / len;
+                let ny = vx / len;
+
+                // If station is not exactly on the line, ensure normal points to the side where the station is
+                if (dist > 0.1) {
+                  const sx = st.center[0] - cx;
+                  const sy = st.center[1] - cy;
+                  if (nx * sx + ny * sy < 0) {
+                    nx = -nx;
+                    ny = -ny;
+                  }
+                }
+
+                bestNormal = [nx, ny];
+              }
+            }
+          }
+        });
+
+        // Place exactly 9.0 units away from road center along the normal
+        const renderPos = [
+          bestPt[0] + bestNormal[0] * 9.0,
+          bestPt[1] + bestNormal[1] * 9.0
+        ];
+
+        // Rotate to face the road. 
+        // If normal is (nx, ny) pointing FROM road TO station,
+        // The vector from station TO road is (-nx, -ny).
+        // atan2 takes (x, z) meaning (x, y) here.
+        const rotation = Math.atan2(-bestNormal[0], -bestNormal[1]);
+
+        return { ...st, renderPos, rotation };
+      });
     }
     return [];
   }, [stations, roads, assetFilters]);
@@ -1169,7 +1185,6 @@ const EVStationsLayer = ({ stations, roads, onFlyTo, onExpand, focusedLandmark, 
   return (
     <group>
       {visibleStations.map(st => {
-        const numChargers = Math.max(1, st.connections.length);
         const isFocused = focusedLandmark?.id === st.id;
 
         return (
@@ -1186,11 +1201,17 @@ const EVStationsLayer = ({ stations, roads, onFlyTo, onExpand, focusedLandmark, 
               </mesh>
             )}
 
-            <ZeonHubModel numChargers={numChargers} scale={[2, 2, 2]} rotation={[0, st.rotation, 0]} />
+            <ZeonHubModel 
+              numChargers={Math.max(1, Math.min(4, Math.floor(st.power / 25)))} 
+              scale={[1.5, 1.5, 1.5]} 
+              rotation={[0, st.rotation || 0, 0]} 
+              data={st}
+              onChargerClick={(data) => setExpandedCharger(data)}
+            />
 
             {/* Interactive Floating Box */}
             <group position={[0, 9, 0]}>
-               <LandmarkMarker st={st} onFlyTo={onFlyTo} onExpand={onExpand} />
+              <LandmarkMarker st={st} onFlyTo={onFlyTo} onExpand={onExpand} />
             </group>
           </group>
         );
@@ -1502,6 +1523,22 @@ const StreetlightsLayer = ({ roads, isNight }: { roads: any[], isNight: boolean 
 
 const TrafficEngine = ({ roads }: { roads: any[] }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const [trafficData, setTrafficData] = useState<any>(null);
+
+  useEffect(() => {
+    const fetchTraffic = async () => {
+      try {
+        const res = await fetch("http://localhost:8001/api/traffic");
+        const data = await res.json();
+        setTrafficData(data);
+      } catch (e) {
+        console.warn("Traffic fetch failed", e);
+      }
+    };
+    fetchTraffic();
+    const interval = setInterval(fetchTraffic, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const paths = useMemo(() => {
     return roads.map(r => {
@@ -1516,7 +1553,7 @@ const TrafficEngine = ({ roads }: { roads: any[] }) => {
     return Array.from({ length: numCars }).map(() => ({
       pathIndex: Math.floor(Math.random() * paths.length),
       progress: Math.random(),
-      speed: (0.0003 + Math.random() * 0.0004) * (Math.random() > 0.5 ? 1 : -1)
+      baseSpeed: (0.0003 + Math.random() * 0.0004) * (Math.random() > 0.5 ? 1 : -1)
     }));
   }, [paths, numCars]);
 
@@ -1525,9 +1562,12 @@ const TrafficEngine = ({ roads }: { roads: any[] }) => {
     const dummy = new THREE.Object3D();
     const pos = new THREE.Vector3();
     const tangent = new THREE.Vector3();
+    
+    const healthMultiplier = trafficData?.health ? Math.max(0.1, trafficData.health) : 1.0;
 
     cars.forEach((car, i) => {
-      car.progress += car.speed;
+      const currentSpeed = car.baseSpeed * healthMultiplier;
+      car.progress += currentSpeed;
       if (car.progress > 1) car.progress = 0;
       if (car.progress < 0) car.progress = 1;
 
@@ -1535,7 +1575,7 @@ const TrafficEngine = ({ roads }: { roads: any[] }) => {
       path.getPointAt(car.progress, pos);
       path.getTangentAt(car.progress, tangent);
 
-      if (car.speed < 0) tangent.negate();
+      if (currentSpeed < 0) tangent.negate();
 
       dummy.position.copy(pos);
       dummy.lookAt(pos.clone().add(tangent));
@@ -1545,12 +1585,38 @@ const TrafficEngine = ({ roads }: { roads: any[] }) => {
     meshRef.current.instanceMatrix.needsUpdate = true;
   });
 
+  const tomtomTubes = useMemo(() => {
+    if (!trafficData?.segments) return [];
+    return trafficData.segments.map((seg: any) => {
+      const pts = seg.line.map((pt: number[]) => new THREE.Vector3(pt[0], 2.5, pt[1]));
+      if (pts.length < 2) return null;
+      const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.1);
+      const ratio = seg.currentSpeed / (seg.freeFlowSpeed || 1);
+      
+      let color = "#10b981"; // green
+      if (ratio < 0.75) color = "#f59e0b"; // orange
+      if (ratio < 0.5) color = "#ef4444"; // red
+      
+      return { curve, color };
+    }).filter(Boolean);
+  }, [trafficData]);
+
   if (paths.length === 0) return null;
   return (
-    <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, numCars]}>
-      <boxGeometry args={[1.5, 0.8, 3]} />
-      <meshStandardMaterial color="#00d2ff" emissive="#00d2ff" emissiveIntensity={1.5} />
-    </instancedMesh>
+    <group>
+      <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, numCars]}>
+        <boxGeometry args={[1.5, 0.8, 3]} />
+        <meshStandardMaterial color="#00d2ff" emissive="#00d2ff" emissiveIntensity={1.5} />
+      </instancedMesh>
+      
+      {/* TomTom Live Traffic Flow Tubes */}
+      {tomtomTubes.map((t: any, i: number) => (
+        <mesh key={`traffic-${i}`}>
+          <tubeGeometry args={[t.curve, 64, 4, 8, false]} />
+          <meshStandardMaterial color={t.color} emissive={t.color} emissiveIntensity={2.0} transparent opacity={0.6} depthWrite={false} />
+        </mesh>
+      ))}
+    </group>
   );
 };
 
@@ -1978,7 +2044,7 @@ const LiveMinimap = ({ roads, telemetryRef }: { roads: any[], telemetryRef: any 
 
 const EVSimulationPanel = ({ landmark }: { landmark: any }) => {
   const [simData, setSimData] = useState({ progress: 50, scenario: "Peak Load Test" });
-  
+
   useEffect(() => {
     const handleProgress = (e: any) => {
       if (e.detail && typeof e.detail === 'object' && e.detail.progress !== undefined) {
@@ -1996,22 +2062,22 @@ const EVSimulationPanel = ({ landmark }: { landmark: any }) => {
     for (let i = 0; i < landmark.id.length; i++) hash += landmark.id.charCodeAt(i);
     return hash;
   }, [landmark.id]);
-  
+
   const timeOffset = (idHash % 20) - 10;
   const hour = (simData.progress / 100) * 24;
-  
-  const morningPeak = Math.exp(-Math.pow(hour - (9 + timeOffset/10), 2) / 4);
-  const eveningPeak = Math.exp(-Math.pow(hour - (18 + timeOffset/10), 2) / 4);
+
+  const morningPeak = Math.exp(-Math.pow(hour - (9 + timeOffset / 10), 2) / 4);
+  const eveningPeak = Math.exp(-Math.pow(hour - (18 + timeOffset / 10), 2) / 4);
   const baseTraffic = 0.1 + (idHash % 10) / 100;
-  
+
   const totalCapacity = landmark.connections ? landmark.connections.length : 2;
-  
+
   // Traffic Reduction for Summer Solar Holiday
   let trafficLevel = morningPeak + eveningPeak + baseTraffic;
   if (simData.scenario === "Summer Solar Holiday") {
     trafficLevel *= 0.75; // 25% traffic reduction
   }
-  
+
   // Multiply by 2 to simulate multiple cars per charger during peak hours
   const carsAtStation = Math.floor(trafficLevel * totalCapacity * 2.0);
   const activeSessions = Math.min(carsAtStation, totalCapacity);
@@ -2026,7 +2092,7 @@ const EVSimulationPanel = ({ landmark }: { landmark: any }) => {
     // Assuming each charger spot has 20kW of solar capacity roof
     solarPower = Math.round(solarCurve * (totalCapacity * 20));
   }
-  
+
   const gridDraw = Math.max(0, totalPowerDraw - solarPower);
 
   return (
@@ -2037,35 +2103,35 @@ const EVSimulationPanel = ({ landmark }: { landmark: any }) => {
         </div>
         <div className="text-[9px] bg-green-500/20 px-2 py-0.5 rounded text-green-300">{simData.scenario}</div>
       </div>
-      
+
       <div className="grid grid-cols-2 gap-4">
         <div>
-           <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Active Chargers</div>
-           <div className="text-xl font-bold text-white">{activeSessions} <span className="text-sm text-gray-500 font-normal">/ {totalCapacity}</span></div>
+          <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Active Chargers</div>
+          <div className="text-xl font-bold text-white">{activeSessions} <span className="text-sm text-gray-500 font-normal">/ {totalCapacity}</span></div>
         </div>
         <div>
-           <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Queue Wait Time</div>
-           <div className={`text-xl font-bold ${queueLength > 0 ? 'text-orange-400' : 'text-green-400'}`}>
-             {queueLength > 0 ? `~${waitTimeMins} mins` : 'No Wait'}
-           </div>
+          <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Queue Wait Time</div>
+          <div className={`text-xl font-bold ${queueLength > 0 ? 'text-orange-400' : 'text-green-400'}`}>
+            {queueLength > 0 ? `~${waitTimeMins} mins` : 'No Wait'}
+          </div>
         </div>
         <div>
-           <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Vehicles Waiting</div>
-           <div className="text-xl font-bold text-white">{queueLength} <span className="text-sm text-gray-500 font-normal">cars</span></div>
+          <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Vehicles Waiting</div>
+          <div className="text-xl font-bold text-white">{queueLength} <span className="text-sm text-gray-500 font-normal">cars</span></div>
         </div>
         <div>
-           <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Grid Power Draw</div>
-           <div className="text-xl font-mono text-cyan-400">{gridDraw} <span className="text-sm text-gray-500 font-sans">kW</span></div>
+          <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Grid Power Draw</div>
+          <div className="text-xl font-mono text-cyan-400">{gridDraw} <span className="text-sm text-gray-500 font-sans">kW</span></div>
         </div>
         {simData.scenario === "Summer Solar Holiday" && (
           <div className="col-span-2 mt-2 pt-3 border-t border-white/10">
-             <div className="flex justify-between items-center">
-               <div className="text-[10px] text-yellow-400 uppercase tracking-wider flex items-center gap-1">
-                 <svg className="w-3 h-3 animate-spin-slow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-                 Solar Power Generation
-               </div>
-               <div className="text-lg font-mono text-yellow-400">+{solarPower} <span className="text-xs text-yellow-500/70 font-sans">kW</span></div>
-             </div>
+            <div className="flex justify-between items-center">
+              <div className="text-[10px] text-yellow-400 uppercase tracking-wider flex items-center gap-1">
+                <svg className="w-3 h-3 animate-spin-slow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="5" /><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" /></svg>
+                Solar Power Generation
+              </div>
+              <div className="text-lg font-mono text-yellow-400">+{solarPower} <span className="text-xs text-yellow-500/70 font-sans">kW</span></div>
+            </div>
           </div>
         )}
       </div>
@@ -2171,11 +2237,37 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const [selectedPhase, setSelectedPhase] = useState<any>(null);
   const [isDriveMode, setIsDriveMode] = useState(false);
   const [isCityTransparent, setIsCityTransparent] = useState(false);
+  const exportGroupRef = useRef<THREE.Group>(null);
+
+  const handleExportGLB = () => {
+    if (!exportGroupRef.current) return;
+    const exporter = new GLTFExporter();
+    exporter.parse(
+      exportGroupRef.current,
+      (gltf) => {
+        const blob = new Blob([gltf as ArrayBuffer], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.style.display = 'none';
+        link.href = url;
+        link.download = 'jp_nagar_city.glb';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      },
+      (error) => {
+        console.error('An error happened during export:', error);
+      },
+      { binary: true }
+    );
+  };
   const [cityOpacity, setCityOpacity] = useState(1.0);
   // EV Simulation state
   const [isEvSim, setIsEvSim] = useState(false);
   const [focusedGridNode, setFocusedGridNode] = useState<any>(null);
   const [expandedGridNode, setExpandedGridNode] = useState<any>(null);
+  const [expandedCharger, setExpandedCharger] = useState<any>(null);
   const [showZones, setShowZones] = useState(true);
   const [zoneNavCollapsed, setZoneNavCollapsed] = useState(false);
 
@@ -2195,19 +2287,19 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
     const handleOpacity = (e: any) => {
       const op = e.detail.opacity;
       const isTrans = op < 1.0;
-      
+
       buildingMaterial.opacity = op;
       treeMaterial.opacity = op;
       roadMaterial.opacity = Math.min(1.0, op + 0.15); // roads slightly more opaque so they are visible
-      
+
       buildingMaterial.transparent = isTrans;
       buildingMaterial.depthWrite = true;
       buildingMaterial.needsUpdate = true;
-      
+
       treeMaterial.transparent = isTrans;
       treeMaterial.depthWrite = true;
       treeMaterial.needsUpdate = true;
-      
+
       roadMaterial.transparent = isTrans;
       roadMaterial.depthWrite = true;
       roadMaterial.needsUpdate = true;
@@ -2261,9 +2353,18 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
       })
       .catch(e => { console.error(e); setLoading(false); });
 
-    fetch("http://localhost:8001/api/ev-stations")
+    fetch("http://localhost:8001/api/chargers")
       .then(res => res.json())
-      .then(data => { if (data.stations) setEvStations(data.stations); })
+      .then(data => { 
+        if (data.chargers) {
+          const mapped = data.chargers.map((c: any) => ({
+            ...c,
+            center: [c.position[0], c.position[2]],
+            category: 'ev_station'
+          }));
+          setEvStations(mapped); 
+        } 
+      })
       .catch(e => console.error(e));
 
     fetch("http://localhost:8001/api/weather")
@@ -2292,7 +2393,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
     });
 
     window.dispatchEvent(new CustomEvent('laip-asset-counts', {
-      detail: { apartments, restaurants, hospital, evStations: evStations.length, roads: cityData.roads.length }
+      detail: { apartments, restaurants, hospital, evStations: evStations.length, roads: cityData.roads.length, traffic: 1000 }
     }));
   }, [cityData, evStations]);
 
@@ -2316,7 +2417,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
 
   // Adjust lighting for better cinematic visibility
   const dimFactor = isCityTransparent ? 0.3 : 1.0;
-  
+
   const sunPos = renderNight ? [-300, -100, -300] : [500, 300, -500]; // Keep sun below horizon at night for Sky
   const lightPos = renderNight ? [-300, 400, -300] : [500, 300, -500]; // Actual directional light source (Moon/Sun)
   const ambientIntensity = (renderNight ? 0.3 : (renderRain ? 0.5 : 0.6)) * dimFactor; // Boosted ambient light
@@ -2348,10 +2449,18 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
               Syncing Massive OSM Drone Data (May take 10s)...
             </div>
           )}
-          
+
           {/* ZONES NAVIGATION PANEL — JP Nagar only */}
           {!isDriveMode && isHomeCity && (
-            <div className="mt-4 pointer-events-auto relative z-[500]" style={{ width: zoneNavCollapsed ? 'auto' : '300px' }}>
+            <div className="absolute top-24 left-[310px] pointer-events-auto z-[500] flex flex-col gap-2" style={{ width: zoneNavCollapsed ? 'auto' : '300px' }}>
+              {/* Unity Export Button */}
+              <button
+                onClick={handleExportGLB}
+                className="bg-purple-600/80 hover:bg-purple-500/90 text-white text-xs font-bold px-3 py-2 rounded-xl backdrop-blur-md shadow-[0_0_15px_rgba(168,85,247,0.5)] border border-purple-400/50 flex items-center justify-center gap-2 transition-all w-full"
+              >
+                <Download size={14} /> EXPORT TO UNITY (.glb)
+              </button>
+
               {zoneNavCollapsed ? (
                 /* Collapsed state: slim tab on the left edge */
                 <div className="relative group">
@@ -2374,7 +2483,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
                   <div className="flex justify-between items-center mb-3">
                     <h3 className="text-white text-sm font-bold tracking-widest uppercase">Zone Navigation</h3>
                     <div className="flex items-center gap-2">
-                      <button 
+                      <button
                         onClick={() => setShowZones(!showZones)}
                         className={`cursor-pointer text-xs px-2 py-1 rounded border transition-colors ${showZones ? 'bg-laip-cyan/20 text-laip-cyan border-laip-cyan/50' : 'bg-white/10 text-gray-400 border-white/20'}`}
                       >
@@ -2397,7 +2506,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
                       </div>
                     </div>
                   </div>
-                  
+
                   <div className="flex flex-wrap gap-2">
                     {JPNagarPhases.map((phase, i) => {
                       const isSelected = selectedPhase?.name === phase.name;
@@ -2426,8 +2535,9 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
       {!isDriveMode && isHomeCity && (
         <button
           onClick={() => setIsDriveMode(true)}
-          className="fixed bottom-3 left-3 bg-red-600 hover:bg-red-500 text-white font-bold px-8 py-3 rounded shadow-[0_0_20px_#dc2626] border border-red-400/50 z-50 animate-pulse tracking-widest uppercase transition-all"
+          className="absolute bottom-24 right-[360px] bg-black/40 hover:bg-white/10 backdrop-blur-xl text-white font-medium px-6 py-2.5 rounded-full border border-white/20 z-[600] flex items-center gap-2 transition-all shadow-2xl pointer-events-auto"
         >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>
           Enter Vehicle Mode
         </button>
       )}
@@ -2496,10 +2606,19 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
         />
       )}
 
-      <Canvas onClick={() => setExpandedLandmark(null)} shadows camera={{ position: [0, 800, 1000], fov: 40, far: 500000 }} gl={{ logarithmicDepthBuffer: true }}>
+      {/* Semantic EV Station Panel */}
+      {expandedCharger && (
+        <SemanticAssetPanel
+          data={expandedCharger}
+          onClose={() => setExpandedCharger(null)}
+        />
+      )}
+
+      <Canvas onClick={() => { setExpandedLandmark(null); setExpandedGridNode(null); }} shadows camera={{ position: [0, 800, 1000], fov: 40, far: 500000 }} gl={{ logarithmicDepthBuffer: true }}>
         <color attach="background" args={[skyColor]} />
 
         <Sky
+          distance={450000}
           sunPosition={sunPos as [number, number, number]}
           turbidity={renderRain ? 3 : 0.2}
           rayleigh={renderNight ? 0.1 : (renderRain ? 2 : 0.5)}
@@ -2531,51 +2650,54 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
             <TilesEnvironment isVisible={cityOpacity >= 1.0 && !anyCategorySelected} lat={tilesLat} lon={tilesLon} alt={tilesAlt} />
           </group>
 
-          {/* Render Massive Mega-Mesh Map — JP Nagar only */}
-          {isHomeCity && cityData && showBuildings && <MergedCityMap buildings={cityData.buildings} isTransparent={isCityTransparent} />}
-          
-          {/* Interactive Roads Layer — JP Nagar only */}
-          {isHomeCity && cityData && showRoads && <RoadsLayer roads={cityData.roads} assetFilters={assetFilters} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} isTransparent={isCityTransparent} />}
+          {/* Group for Unity Export */}
+          <group ref={exportGroupRef}>
+            {/* Render Massive Mega-Mesh Map — JP Nagar only */}
+            {isHomeCity && cityData && showBuildings && <MergedCityMap buildings={cityData.buildings} isTransparent={isCityTransparent} />}
 
-          {/* Render Real Lakes — JP Nagar only */}
-          {isHomeCity && cityData?.lakes && showWaterBodies && <LakesLayer lakes={cityData.lakes} />}
+            {/* Interactive Roads Layer — JP Nagar only */}
+            {isHomeCity && cityData && showRoads && <RoadsLayer roads={cityData.roads} assetFilters={assetFilters} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} isTransparent={isCityTransparent} />}
 
-          {/* Render Landmarks UI — JP Nagar only */}
+            {/* Render Real Lakes — JP Nagar only */}
+            {isHomeCity && cityData?.lakes && showWaterBodies && <LakesLayer lakes={cityData.lakes} />}
+
+            {/* Real Trees & Procedural Lush Forest — JP Nagar only */}
+            {isHomeCity && cityData?.trees && showWaterBodies && <RealTrees trees={cityData.trees} isTransparent={isCityTransparent} />}
+            {isHomeCity && showWaterBodies && <DenseForest lakes={cityData?.lakes} isTransparent={isCityTransparent} />}
+
+            {/* Streetlights — JP Nagar only */}
+            {isHomeCity && cityData?.roads && showRoads && <StreetlightsLayer roads={cityData.roads} isNight={renderNight} />}
+          </group>
+
+          {/* Render Landmarks UI — JP Nagar only (Excluded from export) */}
           {isHomeCity && cityData && showLandmarkPins && <LandmarksLayer buildings={cityData.buildings} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} assetFilters={assetFilters} />}
 
-          {/* Real Trees & Procedural Lush Forest — JP Nagar only */}
-          {isHomeCity && cityData?.trees && showWaterBodies && <RealTrees trees={cityData.trees} isTransparent={isCityTransparent} />}
-          {isHomeCity && showWaterBodies && <DenseForest lakes={cityData?.lakes} isTransparent={isCityTransparent} />}
-          
-          {/* Volumetric Zones — JP Nagar only */}
+          {/* Volumetric Zones — JP Nagar only (Excluded from export) */}
           {isHomeCity && <ZonesLayer active={cityData != null} showZones={showZones} selectedPhase={selectedPhase} />}
-
-          {/* Streetlights — JP Nagar only */}
-          {isHomeCity && cityData?.roads && showRoads && <StreetlightsLayer roads={cityData.roads} isNight={renderNight} />}
 
           {/* Project Nolan-Star Driving Features — JP Nagar only */}
           {isHomeCity && (
-          <DriveableVehicle
-            active={isDriveMode}
-            setSpeed={setSpeed}
-            buildings={cityData?.buildings}
-            roads={cityData?.roads}
-            startPos={startPos}
-            telemetryRef={telemetryRef}
-          />
+            <DriveableVehicle
+              active={isDriveMode}
+              setSpeed={setSpeed}
+              buildings={cityData?.buildings}
+              roads={cityData?.roads}
+              startPos={startPos}
+              telemetryRef={telemetryRef}
+            />
           )}
           <CinematicRain active={renderRain} intensity={rainIntensity} />
 
           {/* Dynamic Infrastructure — JP Nagar only */}
           {isHomeCity && masterVisible && (
-          <EVStationsLayer
-            stations={evStations}
-            roads={cityData?.roads}
-            onFlyTo={handleFlyTo}
-            onExpand={handleExpand}
-            focusedLandmark={focusedLandmark}
-            assetFilters={assetFilters}
-          />
+            <EVStationsLayer
+              stations={evStations}
+              roads={cityData?.roads}
+              onFlyTo={handleFlyTo}
+              onExpand={handleExpand}
+              focusedLandmark={focusedLandmark}
+              assetFilters={assetFilters}
+            />
           )}
 
           {/* EV Station Simulation Power Grid Layer — JP Nagar only */}
@@ -2596,7 +2718,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
           )}
 
           {/* Dynamic Traffic Engine — JP Nagar only (hide if driving to avoid collision glitches) */}
-          {isHomeCity && !isDriveMode && cityData?.roads && <TrafficEngine roads={cityData.roads} />}
+          {isHomeCity && !isDriveMode && cityData?.roads && (assetFilters?.traffic !== false) && <TrafficEngine roads={cityData.roads} />}
 
           {/* Dynamic Flight Engine */}
           {isShowFlights && <FlightEngine />}

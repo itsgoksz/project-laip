@@ -22,7 +22,7 @@ function App() {
   const [isShowFlights, setIsShowFlights] = useState(true);
   const [cameraMode, setCameraMode] = useState<'map' | 'drone'>('map');
   const [rainIntensity, setRainIntensity] = useState(5);
-  const [assetCounts, setAssetCounts] = useState<any>({ apartments: 0, restaurants: 0, hospital: 0, evStations: 0, roads: 0 });
+  const [assetCounts, setAssetCounts] = useState<any>({ apartments: 0, restaurants: 0, hospital: 0, evStations: 0, roads: 0, traffic: 0 });
   const [selectedCity, setSelectedCity] = useState(CITIES[0]);
   const [cityDropdownOpen, setCityDropdownOpen] = useState(false);
   const cityDropdownRef = useRef<HTMLDivElement>(null);
@@ -67,129 +67,131 @@ function App() {
   }, []);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-laip-bg text-white font-sans selection:bg-laip-cyan selection:text-black">
-      {/* Left Sidebar */}
-      <Sidebar isNight={isSimNight} isRain={isSimRain} isEvSim={isEvSim} assetCounts={assetCounts} />
+    <div className="relative w-screen h-screen overflow-hidden bg-laip-bg text-white font-sans selection:bg-laip-cyan selection:text-black">
       
-      {/* Main Center Area */}
-      <div className="flex-1 flex flex-col h-full min-w-0">
-        
-        {/* Top Navigation / Header */}
-        <header className="h-14 border-b border-laip-border bg-laip-panel/80 backdrop-blur-md z-[600] flex items-center px-6 justify-between shrink-0">
-          <div className="flex items-center gap-6">
-            {/* <div className="flex items-center gap-4">
-              <span className="text-sm font-semibold tracking-widest text-gray-400">LAIP <span className="text-laip-cyan">v1.0.0</span></span>
-              <div className="h-4 w-px bg-laip-border"></div>
-            </div> */}
-            {/* View Tabs */}
-            <div className="flex items-center bg-black/40 rounded border border-white/10 p-1">
-              <button 
-                onClick={() => setActiveView('zeon')}
-                className={`px-4 py-1 rounded text-xs tracking-wider transition-colors ${activeView === 'zeon' ? 'bg-laip-cyan text-black font-bold' : 'text-gray-400 hover:text-white'}`}
-              >
-                ZEON HUB
-              </button>
-              <button 
-                onClick={() => setActiveView('city')}
-                className={`px-4 py-1 rounded text-xs tracking-wider transition-colors ${activeView === 'city' ? 'bg-laip-cyan text-black font-bold' : 'text-gray-400 hover:text-white'}`}
-              >
-                CITY STREET
-              </button>
-            </div>
+      {/* 3D Scene — Full Bleed Background */}
+      <div className="absolute inset-0 z-0 pointer-events-auto">
+        {activeView === 'zeon' ? <SceneViewer /> : <CityStreetViewer isShowFlights={isShowFlights} rainIntensity={rainIntensity} cameraMode={cameraMode} cityCenter={selectedCity} />}
+      </div>
 
-            {activeView === 'city' && (
-            <button
-              onClick={() => setIsShowFlights(prev => !prev)}
-              title="used by OpenSky API"
-              className={`flex items-center gap-1.5 border border-white/10 text-xs px-2.5 py-1 rounded transition-colors cursor-pointer ${isShowFlights ? 'bg-black/30 text-white' : 'bg-transparent text-gray-500'}`}
+      {/* Top Floating Header Pill */}
+      <header className="absolute top-6 left-1/2 -translate-x-1/2 z-[600] flex items-center gap-6 px-6 py-2.5 rounded-full bg-black/40 backdrop-blur-xl border border-white/10 shadow-2xl pointer-events-auto transition-all">
+        <div className="flex items-center gap-6">
+          {/* View Tabs */}
+          <div className="flex items-center bg-black/20 rounded-full border border-white/5 p-1">
+            <button 
+              onClick={() => setActiveView('zeon')}
+              className={`px-5 py-1.5 rounded-full text-xs tracking-wider transition-all ${activeView === 'zeon' ? 'bg-laip-cyan/20 text-laip-cyan font-bold shadow-[0_0_10px_rgba(0,240,255,0.2)]' : 'text-gray-400 hover:text-white'}`}
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${isShowFlights ? 'bg-blue-400 animate-pulse' : 'bg-gray-500'}`}></span>
-              <span className={`font-bold ${isShowFlights ? 'text-blue-400' : ''}`}>Show Flights</span>
+              ZEON HUB
             </button>
-            )}
-            <button
-              onClick={() => setCameraMode(prev => prev === 'map' ? 'drone' : 'map')}
-              title="Toggle WASD Drone Camera"
-              className={`flex items-center gap-1.5 border border-white/10 text-xs px-2.5 py-1 rounded transition-colors cursor-pointer ${cameraMode === 'drone' ? 'bg-laip-cyan/20 text-laip-cyan border-laip-cyan/50' : 'bg-transparent text-gray-500'}`}
+            <button 
+              onClick={() => setActiveView('city')}
+              className={`px-5 py-1.5 rounded-full text-xs tracking-wider transition-all ${activeView === 'city' ? 'bg-laip-cyan/20 text-laip-cyan font-bold shadow-[0_0_10px_rgba(0,240,255,0.2)]' : 'text-gray-400 hover:text-white'}`}
             >
-              <span className={`font-bold`}>Drone Cam</span>
+              CITY STREET
             </button>
-            {/* Weather Indicators (only shown in City Street view when weather data available) */}
-            {activeView === 'city' && weather && (
-              <div className="flex items-center gap-2">
-                <div className="h-4 w-px bg-laip-border"></div>
-                <div className="flex items-center gap-1.5 bg-black/30 border border-white/10 text-white text-xs px-2.5 py-1 rounded">
-                  <span className="text-gray-400 text-[10px] uppercase tracking-wider">Temp</span>
-                  <span className="font-bold text-laip-cyan">{weather.temperature}°C</span>
-                </div>
-                <div 
-                  className="flex items-center gap-1.5 bg-black/30 border border-white/10 text-white text-xs px-2.5 py-1 rounded cursor-help"
-                  title={`Live Condition Code: ${weather.weather_code}`}
-                >
-                  <span className="text-gray-400 text-[10px] uppercase tracking-wider">Sky</span>
-                  <span className="font-bold">
-                    {weather.weather_code >= 61 ? '🌧 Rain' : (!weather.is_day ? '🌙 Night' : '☀ Clear')}
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
-          <div className="flex items-center gap-4">
-            {/* City Selector */}
-            <div className="relative" ref={cityDropdownRef}>
-              <div className="flex items-center gap-2 text-xs">
-                <span className="w-2 h-2 rounded-full bg-laip-cyan shadow-[0_0_8px_#00f0ff]"></span>
-                <span className="text-gray-300">System Online</span>
-                <button
-                  onClick={() => setCityDropdownOpen(prev => !prev)}
-                  title="Switch city"
-                  className="cursor-pointer flex items-center gap-1 ml-1 px-2 py-1 rounded border border-white/10 bg-black/30 hover:bg-white/10 hover:border-white/30 text-gray-300 hover:text-white transition-all"
-                >
-                  <MapPin size={11} className="text-laip-cyan" />
-                  <span className="font-medium tracking-wide">{selectedCity.label}</span>
-                  <ChevronDown size={11} className={`transition-transform ${cityDropdownOpen ? 'rotate-180' : ''}`} />
-                </button>
-              </div>
-              {/* Dropdown */}
-              {cityDropdownOpen && (
-                <div className="absolute right-0 top-full mt-2 w-56 bg-black/90 backdrop-blur-md border border-white/15 rounded-xl shadow-2xl overflow-hidden z-[999]">
-                  <div className="px-3 py-2 border-b border-white/10">
-                    <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">Select City</span>
-                  </div>
-                  {CITIES.map(city => (
-                    <button
-                      key={city.id}
-                      onClick={() => { setSelectedCity(city); setCityDropdownOpen(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-xs transition-colors ${
-                        selectedCity.id === city.id
-                          ? 'bg-laip-cyan/15 text-laip-cyan'
-                          : 'text-gray-300 hover:bg-white/10 hover:text-white'
-                      }`}
-                    >
-                      <MapPin size={12} className={selectedCity.id === city.id ? 'text-laip-cyan' : 'text-gray-500'} />
-                      <span className="font-medium">{city.label}</span>
-                      {selectedCity.id === city.id && (
-                        <span className="ml-auto text-[9px] bg-laip-cyan/20 text-laip-cyan px-1.5 py-0.5 rounded font-bold tracking-wider">ACTIVE</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </header>
 
-        {/* 3D Scene — sits below the header, no absolute positioning */}
-        <div className="flex-1 w-full min-h-0 relative overflow-hidden">
-          {activeView === 'zeon' ? <SceneViewer /> : <CityStreetViewer isShowFlights={isShowFlights} rainIntensity={rainIntensity} cameraMode={cameraMode} cityCenter={selectedCity} />}
+          {activeView === 'city' && (
+          <button
+            onClick={() => setIsShowFlights(prev => !prev)}
+            title="used by OpenSky API"
+            className={`flex items-center gap-1.5 border border-white/10 text-xs px-3 py-1.5 rounded-full transition-colors cursor-pointer ${isShowFlights ? 'bg-black/30 text-white' : 'bg-transparent text-gray-400'}`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${isShowFlights ? 'bg-blue-400 animate-pulse' : 'bg-gray-500'}`}></span>
+            <span className={`font-medium ${isShowFlights ? 'text-blue-300' : ''}`}>Show Flights</span>
+          </button>
+          )}
+          <button
+            onClick={() => setCameraMode(prev => prev === 'map' ? 'drone' : 'map')}
+            title="Toggle WASD Drone Camera"
+            className={`flex items-center gap-1.5 border border-white/10 text-xs px-3 py-1.5 rounded-full transition-colors cursor-pointer ${cameraMode === 'drone' ? 'bg-laip-cyan/20 text-laip-cyan border-laip-cyan/30' : 'bg-transparent text-gray-400'}`}
+          >
+            <span className={`font-medium`}>Drone Cam</span>
+          </button>
+          {/* Weather Indicators */}
+          {activeView === 'city' && weather && (
+            <div className="flex items-center gap-3">
+              <div className="h-4 w-px bg-white/10"></div>
+              <div className="flex items-center gap-1.5 bg-black/20 border border-white/5 text-white text-xs px-3 py-1.5 rounded-full">
+                <span className="text-gray-400 text-[10px] uppercase tracking-wider font-medium">Temp</span>
+                <span className="font-semibold text-white">{weather.temperature}°C</span>
+              </div>
+              <div 
+                className="flex items-center gap-1.5 bg-black/20 border border-white/5 text-white text-xs px-3 py-1.5 rounded-full cursor-help"
+                title={`Live Condition Code: ${weather.weather_code}`}
+              >
+                <span className="text-gray-400 text-[10px] uppercase tracking-wider font-medium">Sky</span>
+                <span className="font-semibold">
+                  {weather.weather_code >= 61 ? '🌧 Rain' : (!weather.is_day ? '🌙 Night' : '☀ Clear')}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
-        
-        {/* Bottom Timeline Bar */}
+        <div className="flex items-center gap-4">
+          <div className="h-4 w-px bg-white/10"></div>
+          {/* City Selector */}
+          <div className="relative" ref={cityDropdownRef}>
+            <div className="flex items-center gap-3 text-xs">
+              <div className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400 shadow-[0_0_8px_#4ade80]"></span>
+                <span className="text-gray-300 font-medium">System Online</span>
+              </div>
+              <button
+                onClick={() => setCityDropdownOpen(prev => !prev)}
+                title="Switch city"
+                className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-white/10 bg-black/30 hover:bg-white/10 text-white transition-all"
+              >
+                <MapPin size={12} className="text-laip-cyan" />
+                <span className="font-semibold tracking-wide">{selectedCity.label}</span>
+                <ChevronDown size={12} className={`transition-transform ${cityDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+            {/* Dropdown */}
+            {cityDropdownOpen && (
+              <div className="absolute right-0 top-full mt-3 w-56 bg-black/80 backdrop-blur-xl border border-white/15 rounded-2xl shadow-2xl overflow-hidden z-[999]">
+                <div className="px-4 py-3 border-b border-white/10">
+                  <span className="text-[10px] text-gray-400 uppercase tracking-widest font-semibold">Select City</span>
+                </div>
+                {CITIES.map(city => (
+                  <button
+                    key={city.id}
+                    onClick={() => { setSelectedCity(city); setCityDropdownOpen(false); }}
+                    className={`w-full flex items-center gap-2.5 px-4 py-3 text-xs transition-colors ${
+                      selectedCity.id === city.id
+                        ? 'bg-laip-cyan/15 text-laip-cyan'
+                        : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <MapPin size={12} className={selectedCity.id === city.id ? 'text-laip-cyan' : 'text-gray-500'} />
+                    <span className="font-medium">{city.label}</span>
+                    {selectedCity.id === city.id && (
+                      <span className="ml-auto text-[9px] bg-laip-cyan/20 text-laip-cyan px-2 py-0.5 rounded-full font-bold tracking-wider">ACTIVE</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Floating Left Sidebar */}
+      <div className="absolute left-6 top-24 bottom-6 w-[280px] z-40 pointer-events-none">
+        <Sidebar isNight={isSimNight} isRain={isSimRain} isEvSim={isEvSim} assetCounts={assetCounts} />
+      </div>
+
+      {/* Floating Right Panel */}
+      <div className="absolute right-6 top-24 bottom-6 w-[320px] z-40 pointer-events-none flex flex-col items-end">
+        <RightPanel isNight={isSimNight} isRain={isSimRain} isEvSim={isEvSim} rainIntensity={rainIntensity} cameraMode={cameraMode} />
+      </div>
+
+      {/* Floating Bottom Bar */}
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
         <BottomBar />
       </div>
-      
-      {/* Right Intelligence Panel */}
-      <RightPanel isNight={isSimNight} isRain={isSimRain} isEvSim={isEvSim} rainIntensity={rainIntensity} cameraMode={cameraMode} />
     </div>
   );
 }

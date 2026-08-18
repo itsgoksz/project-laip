@@ -345,5 +345,119 @@ async def get_city_data():
     }
     return CITY_DATA_CACHE
 
+TOMTOM_API_KEY = "reitkjbaLdcjS6lc9nT8Q0J1uhnINnal"
+TRAFFIC_POINTS = [
+    "12.905,77.590", # JP Nagar Central
+    "12.910,77.595", # Bannerghatta Road intersection
+    "12.900,77.585", # South JP Nagar
+    "12.915,77.585"  # Jayanagar border
+]
+
+@app.get("/api/traffic")
+async def get_traffic():
+    async with httpx.AsyncClient() as client:
+        tasks = []
+        for pt in TRAFFIC_POINTS:
+            url = f"https://api.tomtom.com/traffic/services/4/flowSegmentData/relative0/10/json?point={pt}&unit=KMPH&key={TOMTOM_API_KEY}"
+            tasks.append(client.get(url))
+        
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        segments = []
+        total_current = 0
+        total_free = 0
+        
+        for res in responses:
+            if isinstance(res, Exception) or res.status_code != 200:
+                continue
+            try:
+                data = res.json()
+                if "flowSegmentData" in data:
+                    flow = data["flowSegmentData"]
+                    coords = flow.get("coordinates", {}).get("coordinate", [])
+                    
+                    # Convert lat/lon to our 3D cartesian
+                    # 1 degree lat is approx 111,111 meters
+                    # 1 degree lon is approx 111,111 * cos(lat) = 111,111 * cos(12.9) = 108,000 meters
+                    # Our center is LAT=12.905, LON=77.590
+                    line_3d = []
+                    for c in coords:
+                        dx = (c["longitude"] - 77.590) * 108000
+                        dz = (c["latitude"] - 12.905) * -111111  # negative because 3D z is inverted
+                        line_3d.append([dx, dz])
+                    
+                    if len(line_3d) > 1:
+                        segments.append({
+                            "currentSpeed": flow.get("currentSpeed", 30),
+                            "freeFlowSpeed": flow.get("freeFlowSpeed", 40),
+                            "line": line_3d
+                        })
+                        total_current += flow.get("currentSpeed", 30)
+                        total_free += flow.get("freeFlowSpeed", 40)
+            except Exception as e:
+                print("Error parsing traffic:", e)
+                
+        # Calculate a global traffic health ratio (1.0 = free flow, 0.0 = stopped)
+        health = (total_current / total_free) if total_free > 0 else 1.0
+        
+        return {"segments": segments, "health": health}
+
+OCM_API_KEY = "5571a0e2-96ba-4406-bb42-bf2fbc8d7a48"
+
+@app.get("/api/chargers")
+async def get_chargers():
+    async with httpx.AsyncClient() as client:
+        # Bounding box for JP Nagar
+        url = f"https://api.openchargemap.io/v3/poi/?output=json&countrycode=IN&boundingbox=(12.93,77.57),(12.88,77.61)&maxresults=50&key={OCM_API_KEY}"
+        res = await client.get(url)
+        
+        if res.status_code != 200:
+            return {"chargers": []}
+            
+        data = res.json()
+        chargers = []
+        
+        for poi in data:
+            try:
+                addr = poi.get("AddressInfo", {})
+                lat = addr.get("Latitude", 0)
+                lon = addr.get("Longitude", 0)
+                
+                # Convert lat/lon to our 3D cartesian
+                # Our center is LAT=12.905, LON=77.590
+                dx = (lon - 77.590) * 108000
+                dz = (lat - 12.905) * -111111
+                
+                # Extract connections safely
+                connections = poi.get("Connections") or []
+                if connections and connections[0]:
+                    power_kw = connections[0].get("PowerKW") or 50
+                    c_type_obj = connections[0].get("ConnectionType") or {}
+                    conn_type = c_type_obj.get("Title", "Type 2")
+                else:
+                    power_kw = 50
+                    conn_type = "Type 2"
+                
+                # Check operator info safely
+                operator_obj = poi.get("OperatorInfo") or {}
+                
+                # Check status safely
+                status_obj = poi.get("StatusType") or {}
+
+                chargers.append({
+                    "id": poi.get("ID", ""),
+                    "title": addr.get("Title", "EV Station"),
+                    "operator": operator_obj.get("Title", "Unknown Operator"),
+                    "power": power_kw,
+                    "connectionType": conn_type,
+                    "status": status_obj.get("IsOperational", True),
+                    "cost": poi.get("UsageCost", "Unknown"),
+                    "position": [dx, 0, dz]
+                })
+            except Exception as e:
+                print(f"Error parsing charger: {e}")
+                
+        return {"chargers": chargers}
+
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)

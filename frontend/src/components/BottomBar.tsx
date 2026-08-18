@@ -25,7 +25,7 @@ export const BottomBar = () => {
   }, [progress, scenario]);
 
   return (
-    <div className="h-16 border-t border-laip-border bg-laip-panel flex items-center px-6 shrink-0 z-10 backdrop-blur-md">
+    <div className="h-14 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full flex items-center px-6 z-10 shadow-2xl min-w-[600px] pointer-events-auto">
       <div className="flex items-center gap-4 w-48">
         <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Simulation</h3>
         <span className="text-laip-cyan text-xs font-mono bg-laip-cyan/10 px-2 py-1 rounded">14:30:00</span>
