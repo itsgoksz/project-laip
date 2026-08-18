@@ -19,6 +19,9 @@ function App() {
   const [isSimNight, setIsSimNight] = useState(false);
   const [isSimRain, setIsSimRain] = useState(false);
   const [isEvSim, setIsEvSim] = useState(false);
+  const [isStreetlightsSim, setIsStreetlightsSim] = useState(false);
+  const [isStreetlightsAssetFilter, setIsStreetlightsAssetFilter] = useState(false);
+
   const [isShowFlights, setIsShowFlights] = useState(true);
   const [cameraMode, setCameraMode] = useState<'map' | 'drone'>('map');
   const [rainIntensity, setRainIntensity] = useState(5);
@@ -45,9 +48,16 @@ function App() {
     const handleSim = (e: any) => {
       if (e.detail.type === 'toggle-rain') setIsSimRain(prev => !prev);
       if (e.detail.type === 'toggle-night') setIsSimNight(prev => !prev);
+      if (e.detail.type === 'toggle-streetlights-sim') setIsStreetlightsSim(prev => !prev);
     };
+
     const handleEvSim = (e: any) => {
       if (e.detail.type === 'toggle-ev-sim') setIsEvSim(prev => !prev);
+    };
+    const handleAssetFilter = (e: any) => {
+      if (e.detail?.categoryFilters) {
+        setIsStreetlightsAssetFilter(!!e.detail.categoryFilters.streetlights);
+      }
     };
     const handleCounts = (e: any) => setAssetCounts(e.detail);
     const handleRainIntensity = (e: any) => setRainIntensity(e.detail.intensity);
@@ -55,12 +65,14 @@ function App() {
     window.addEventListener('laip-weather', handleWeather);
     window.addEventListener('laip-sim', handleSim);
     window.addEventListener('laip-ev-sim', handleEvSim);
+    window.addEventListener('laip-asset-filter', handleAssetFilter);
     window.addEventListener('laip-asset-counts', handleCounts);
     window.addEventListener('laip-rain-intensity', handleRainIntensity);
     return () => {
       window.removeEventListener('laip-weather', handleWeather);
       window.removeEventListener('laip-sim', handleSim);
       window.removeEventListener('laip-ev-sim', handleEvSim);
+      window.removeEventListener('laip-asset-filter', handleAssetFilter);
       window.removeEventListener('laip-asset-counts', handleCounts);
       window.removeEventListener('laip-rain-intensity', handleRainIntensity);
     };
@@ -75,7 +87,7 @@ function App() {
       </div>
 
       {/* Top Floating Header Pill */}
-      <header className="absolute top-6 left-1/2 -translate-x-1/2 z-[600] flex items-center gap-6 px-6 py-2.5 rounded-full bg-black/40 backdrop-blur-xl border border-white/10 shadow-2xl pointer-events-auto transition-all">
+      <header className="absolute top-6 left-1/2 -translate-x-1/2 z-[600] flex items-center gap-6 px-1 py-1 rounded-full bg-black/40 backdrop-blur-xl border border-white/10 shadow-2xl pointer-events-auto transition-all whitespace-nowrap">
         <div className="flex items-center gap-6">
           {/* View Tabs */}
           <div className="flex items-center bg-black/20 rounded-full border border-white/5 p-1">
@@ -180,12 +192,21 @@ function App() {
 
       {/* Floating Left Sidebar */}
       <div className="absolute left-6 top-24 bottom-6 w-[280px] z-40 pointer-events-none">
-        <Sidebar isNight={isSimNight} isRain={isSimRain} isEvSim={isEvSim} assetCounts={assetCounts} />
+        <Sidebar isNight={isSimNight} isRain={isSimRain} isEvSim={isEvSim} isStreetlightsSim={isStreetlightsSim} assetCounts={assetCounts} />
+
       </div>
 
       {/* Floating Right Panel */}
       <div className="absolute right-6 top-24 bottom-6 w-[320px] z-40 pointer-events-none flex flex-col items-end">
-        <RightPanel isNight={isSimNight} isRain={isSimRain} isEvSim={isEvSim} rainIntensity={rainIntensity} cameraMode={cameraMode} />
+        <RightPanel 
+          isNight={isSimNight} 
+          isRain={isSimRain} 
+          isEvSim={isEvSim} 
+          isStreetlightsSim={isStreetlightsSim}
+          isStreetlightsAssetFilter={isStreetlightsAssetFilter}
+          rainIntensity={rainIntensity} 
+          cameraMode={cameraMode} 
+        />
       </div>
 
       {/* Floating Bottom Bar */}

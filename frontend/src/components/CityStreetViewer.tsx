@@ -1,6 +1,8 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { SemanticAssetPanel } from './SemanticAssetPanel';
+import { StreetlightIntelligencePanel } from './StreetlightIntelligencePanel';
+
 import { OrbitControls, Environment, Html, Sky, FlyControls } from '@react-three/drei';
 import { EffectComposer, N8AO, Bloom, Vignette, ToneMapping, DepthOfField } from '@react-three/postprocessing';
 import { ToneMappingMode } from 'postprocessing';
@@ -566,8 +568,8 @@ const CameraController = ({ targetPos, onArrived }: { targetPos: THREE.Vector3 |
   useEffect(() => {
     if (targetPos) {
       targetLookAt.current.set(targetPos.x, 0, targetPos.z);
-      const height = targetPos.y > 0 ? targetPos.y : 200;
-      const zOffset = targetPos.y > 0 ? targetPos.y * 1.2 : 300;
+      const height = targetPos.y > 0 ? targetPos.y : 180;
+      const zOffset = targetPos.y > 0 ? targetPos.y * 1.2 : 250;
       targetCameraPos.current.set(targetPos.x, height, targetPos.z + zOffset);
       isAnimating.current = true;
     }
@@ -575,13 +577,19 @@ const CameraController = ({ targetPos, onArrived }: { targetPos: THREE.Vector3 |
 
   useFrame((state, delta) => {
     if (isAnimating.current && targetPos) {
-      state.camera.position.lerp(targetCameraPos.current, 4 * delta);
+      state.camera.position.lerp(targetCameraPos.current, 5 * delta);
       if (state.controls) {
-        (state.controls as any).target.lerp(targetLookAt.current, 4 * delta);
+        (state.controls as any).target.lerp(targetLookAt.current, 5 * delta);
         (state.controls as any).update();
       }
 
-      if (state.camera.position.distanceTo(targetCameraPos.current) < 5) {
+      if (state.camera.position.distanceTo(targetCameraPos.current) < 3) {
+        // Snap exactly to target and stop animating
+        state.camera.position.copy(targetCameraPos.current);
+        if (state.controls) {
+          (state.controls as any).target.copy(targetLookAt.current);
+          (state.controls as any).update();
+        }
         isAnimating.current = false;
         onArrived();
       }
@@ -1017,7 +1025,7 @@ const EVSimulationLayer = ({ evStations, buildings, roads, onFlyTo, onExpand, fo
   // Precompute paths to avoid running Dijkstra on every render frame
   const { hubPaths, evPaths } = useMemo(() => {
     if (!hub || !roadGraph) return { hubPaths: [], evPaths: [] };
-    
+
     const hPos = new THREE.Vector3(hub.center[0], 12, hub.center[1]);
     const hPaths = substations.map(sub => {
       const path = roadGraph.findShortestPath(hPos.x, hPos.z, sub.center[0], sub.center[1]);
@@ -1099,7 +1107,7 @@ const EVSimulationLayer = ({ evStations, buildings, roads, onFlyTo, onExpand, fo
             {myEVStations.map((ev, evIdx) => {
               const undergroundPath = evPaths[subIdx]?.[evIdx];
               if (!undergroundPath || undergroundPath.length < 2) return null;
-              
+
               // Compute dynamic pipeline stress from live metrics
               const metrics = stationMetrics?.[ev.id];
               let pipeIntensity = 0.2; // idle baseline
@@ -1110,7 +1118,7 @@ const EVSimulationLayer = ({ evStations, buildings, roads, onFlyTo, onExpand, fo
                 const numChargers = Math.max(1, Math.min(4, Math.floor(ev.power / 25)));
                 const loadRatio = metrics.activeCars.length / numChargers;
                 pipeIntensity = 0.2 + (loadRatio * 0.8);
-                
+
                 // If maxed out, shift pipeline to an intense amber/red to indicate grid stress
                 if (loadRatio >= 1.0) {
                   pipeColor = "#ea580c"; // orange-600
@@ -1234,10 +1242,10 @@ const EVStationsLayer = ({ stations, roads, onFlyTo, onExpand, focusedLandmark, 
               </mesh>
             )}
 
-            <ZeonHubModel 
-              numChargers={Math.max(1, Math.min(4, Math.floor(st.power / 25)))} 
-              scale={[1.5, 1.5, 1.5]} 
-              rotation={[0, st.rotation || 0, 0]} 
+            <ZeonHubModel
+              numChargers={Math.max(1, Math.min(4, Math.floor(st.power / 25)))}
+              scale={[1.5, 1.5, 1.5]}
+              rotation={[0, st.rotation || 0, 0]}
               data={st}
               simMetrics={stationMetrics[st.id]}
               onChargerClick={(data) => {
@@ -1476,7 +1484,23 @@ const DenseForest = ({ lakes }: { lakes?: any[], isTransparent: boolean }) => {
   );
 };
 
-const StreetlightsLayer = ({ roads, isNight }: { roads: any[], isNight: boolean }) => {
+const StreetlightsLayer = ({
+  roads,
+  isNight,
+  isStreetlightsSim,
+  streetlightData,
+  selectedStreetlightIndex,
+  onStreetlightClick,
+  onFlyTo
+}: {
+  roads: any[],
+  isNight: boolean,
+  isStreetlightsSim: boolean,
+  streetlightData: any[],
+  selectedStreetlightIndex: number | null,
+  onStreetlightClick: (assetId: string, idx: number) => void,
+  onFlyTo?: (pt: THREE.Vector3) => void
+}) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const poleRef = useRef<THREE.InstancedMesh>(null);
   const glowRef = useRef<THREE.InstancedMesh>(null);
@@ -1484,26 +1508,35 @@ const StreetlightsLayer = ({ roads, isNight }: { roads: any[], isNight: boolean 
   const points = useMemo(() => {
     const arr: THREE.Vector3[] = [];
     roads.forEach(r => {
-      const isMajor = r.type === "primary" || r.type === "secondary";
-      const isMinor = r.type === "residential" || r.type === "tertiary";
+      const isPrimary = r.type === "primary" || r.type === "trunk";
+      const isSecondary = r.type === "secondary";
+      const isMajor = isPrimary || isSecondary;
+      const isMinor = r.type === "residential" || r.type === "tertiary" || r.type === "unclassified";
 
       if ((!isMajor && !isMinor) || r.line.length < 2) return;
       const pts = r.line.map((pt: number[]) => new THREE.Vector3(pt[0], 0, pt[1]));
       const path = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.1);
 
-      // Light every 25 meters for major, 60 meters for minor
-      const spacing = isMajor ? 25 : 60;
+      // Light every 30m for major roads, 70m for minor
+      const spacing = isMajor ? 30 : 70;
       const count = Math.floor(path.getLength() / spacing);
       if (count === 0) return;
+
+      // Offset past the road edge onto the pavement:
+      // Primary tube radius=6, sidewalk=7.5 → place at ~8.5
+      // Secondary tube radius=6, sidewalk=7.5 → place at ~7.5
+      // Minor tube radius=3.5, sidewalk=4.5 → place at ~5
+      const offset = isPrimary ? 8.5 : isSecondary ? 7.5 : 5.0;
+
       for (let i = 0; i <= count; i++) {
         const t = count === 0 ? 0 : (i / count);
         const pt = path.getPointAt(t);
         const tangent = path.getTangentAt(t);
         const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
 
-        // Spawn lights on both sides of the road
-        arr.push(pt.clone().add(normal.clone().multiplyScalar(4)));
-        arr.push(pt.clone().add(normal.clone().multiplyScalar(-4)));
+        // One light per side, staggered so they alternate sides along the road
+        const side = i % 2 === 0 ? 1 : -1;
+        arr.push(pt.clone().add(normal.clone().multiplyScalar(offset * side)));
       }
     });
     return arr;
@@ -1512,42 +1545,170 @@ const StreetlightsLayer = ({ roads, isNight }: { roads: any[], isNight: boolean 
   useEffect(() => {
     if (meshRef.current && poleRef.current && points.length > 0) {
       const dummy = new THREE.Object3D();
+      const colorHelper = new THREE.Color();
+
       points.forEach((pt, i) => {
+        // Map to 100 simulated streetlights (SL-0 to SL-99)
+        const assetId = `SL-${i % 100}`;
+        const intel = streetlightData.find(d => d.asset_id === assetId);
+
+        // Is this specific light ON?
+        const isCurrentlyOn = isNight || isStreetlightsSim;
+
+        let lightType = "LED";
+        let isAnomaly = false;
+        let healthScore = 100;
+        let isNightFailure = false;
+
+        if (intel) {
+          lightType = intel.light_type;
+          isAnomaly = intel.anomaly_detected;
+          healthScore = intel.health_score;
+          isNightFailure = isAnomaly && intel.detected_issues?.some((issue: string) =>
+            issue.includes("No power consumption")
+          );
+        } else {
+          // Fallback before metrics load — zone-based to match simulator
+          // Zone A: SL-0..39 = Sodium, Zone B: SL-40..64 = Sodium, Zone C: SL-65..99 = LED
+          const slNum = i % 100;
+          lightType = slNum >= 65 ? "LED" : "Sodium";
+        }
+
+        // Determine Bulb Color and Glow
+        let bulbColorHex = "#334155"; // Standby dark
+        let glowScale = 0.001; // Hidden glow
+
+        if (isCurrentlyOn) {
+          if (isNightFailure) {
+            bulbColorHex = "#1c1d24";
+            glowScale = 0.001;
+          } else if (isAnomaly && healthScore < 50) {
+            bulbColorHex = "#ef4444"; // Red for critical anomaly
+            glowScale = 1.3;
+          } else if (isAnomaly) {
+            bulbColorHex = "#f97316"; // Orange for warning anomaly
+            glowScale = 1.1;
+          } else {
+            if (lightType === "Sodium") {
+              bulbColorHex = "#f59e0b"; // Sodium vapor (Yellow-Orange)
+              glowScale = 1.0;
+            } else {
+              bulbColorHex = "#fef08a"; // LED (White-Yellow)
+              glowScale = 1.0;
+            }
+          }
+        }
+
+        // 1. Bulb Position and Color
         dummy.position.copy(pt);
-        dummy.position.y = 5; // Bulb height
+        dummy.position.y = 5;
         dummy.updateMatrix();
         meshRef.current!.setMatrixAt(i, dummy.matrix);
+
+        colorHelper.set(bulbColorHex);
+        meshRef.current!.setColorAt(i, colorHelper);
+
+        // 2. Glow halo
         if (glowRef.current) {
           dummy.position.y = 5;
-          dummy.scale.setScalar(isNight ? 1 : 0.001); // hide glow during day
+          dummy.scale.setScalar(glowScale);
           dummy.updateMatrix();
           glowRef.current!.setMatrixAt(i, dummy.matrix);
-          dummy.scale.setScalar(1);
+
+          colorHelper.set(bulbColorHex === "#334155" || bulbColorHex === "#1c1d24" ? "#000000" : bulbColorHex);
+          glowRef.current!.setColorAt(i, colorHelper);
+
+          dummy.scale.setScalar(1); // Restore
         }
-        dummy.position.y = 2.5; // Pole center
+
+        // 3. Pole Position
+        dummy.position.y = 2.5;
         dummy.updateMatrix();
         poleRef.current!.setMatrixAt(i, dummy.matrix);
       });
+
       meshRef.current.instanceMatrix.needsUpdate = true;
+      if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
       poleRef.current.instanceMatrix.needsUpdate = true;
-      if (glowRef.current) glowRef.current.instanceMatrix.needsUpdate = true;
+      if (glowRef.current) {
+        glowRef.current.instanceMatrix.needsUpdate = true;
+        if (glowRef.current.instanceColor) glowRef.current.instanceColor.needsUpdate = true;
+      }
     }
-  }, [points, isNight]);
+  }, [points, isNight, isStreetlightsSim, streetlightData]);
+
+  useEffect(() => {
+    const handleFlyTo = (e: any) => {
+      const assetId = e.detail?.assetId;
+      if (assetId && points.length > 0 && onFlyTo) {
+        const slNum = parseInt(assetId.replace("SL-", ""), 10);
+        if (!isNaN(slNum)) {
+          const idx = slNum % points.length;
+          const pt = points[idx];
+          if (pt) {
+            onFlyTo(pt);
+            // Also trigger selection highlight for that light
+            onStreetlightClick(assetId, idx);
+          }
+        }
+      }
+    };
+    window.addEventListener("laip-streetlight-flyto", handleFlyTo);
+    return () => window.removeEventListener("laip-streetlight-flyto", handleFlyTo);
+  }, [points, onFlyTo, onStreetlightClick]);
 
   if (points.length === 0) return null;
+
   return (
     <group>
-      {/* Bulb */}
-      <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, points.length]}>
+      {/* Selected streetlight indicator */}
+      {selectedStreetlightIndex !== null && points[selectedStreetlightIndex] && (
+        <group position={[points[selectedStreetlightIndex].x, 0.5, points[selectedStreetlightIndex].z]}>
+          {/* Glowing cylinder beam */}
+          <mesh position={[0, 10, 0]}>
+            <cylinderGeometry args={[1.5, 1.5, 20, 16]} />
+            <meshStandardMaterial color="#00f0ff" emissive="#00f0ff" emissiveIntensity={3} transparent opacity={0.3} depthWrite={false} blending={THREE.AdditiveBlending} />
+          </mesh>
+          {/* Bounding wireframe box */}
+          <mesh position={[0, 2.5, 0]}>
+            <boxGeometry args={[4, 6, 4]} />
+            <meshStandardMaterial color="#00f0ff" emissive="#00f0ff" emissiveIntensity={1} wireframe transparent opacity={0.6} />
+          </mesh>
+        </group>
+      )}
+
+      {/* Bulbs — pointer cursor + click handler */}
+      <instancedMesh
+        ref={meshRef}
+        args={[undefined as any, undefined as any, points.length]}
+        onClick={(e) => {
+          e.stopPropagation();
+          const idx = e.instanceId;
+          if (idx !== undefined) {
+            const assetId = `SL-${idx % 100}`;
+            onStreetlightClick(assetId, idx);
+          }
+        }}
+        onPointerEnter={(e) => {
+          e.stopPropagation();
+          document.body.style.cursor = 'pointer';
+        }}
+        onPointerLeave={(e) => {
+          e.stopPropagation();
+          document.body.style.cursor = 'auto';
+        }}
+      >
         <sphereGeometry args={[0.7, 8, 8]} />
-        <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={isNight ? 20 : 3} toneMapped={false} />
+        <meshStandardMaterial toneMapped={false} emissive={new THREE.Color('#ffffff')} emissiveIntensity={0.2} />
       </instancedMesh>
-      {/* Glow halo at night */}
+
+      {/* Glow Halos */}
       <instancedMesh ref={glowRef} args={[undefined as any, undefined as any, points.length]}>
         <sphereGeometry args={[4, 8, 8]} />
-        <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={2} transparent opacity={0.12} depthWrite={false} blending={THREE.AdditiveBlending} />
+        <meshStandardMaterial transparent opacity={0.15} depthWrite={false} blending={THREE.AdditiveBlending} />
       </instancedMesh>
-      {/* Pole */}
+
+      {/* Poles */}
       <instancedMesh ref={poleRef} args={[undefined as any, undefined as any, points.length]}>
         <cylinderGeometry args={[0.15, 0.15, 5, 4]} />
         <meshStandardMaterial color="#475569" metalness={0.8} roughness={0.2} />
@@ -1599,7 +1760,7 @@ const TrafficEngine = ({ roads }: { roads: any[] }) => {
     const dummy = new THREE.Object3D();
     const pos = new THREE.Vector3();
     const tangent = new THREE.Vector3();
-    
+
     const healthMultiplier = trafficData?.health ? Math.max(0.1, trafficData.health) : 1.0;
 
     cars.forEach((car, i) => {
@@ -1629,11 +1790,11 @@ const TrafficEngine = ({ roads }: { roads: any[] }) => {
       if (pts.length < 2) return null;
       const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.1);
       const ratio = seg.currentSpeed / (seg.freeFlowSpeed || 1);
-      
+
       let color = "#10b981"; // green
       if (ratio < 0.75) color = "#f59e0b"; // orange
       if (ratio < 0.5) color = "#ef4444"; // red
-      
+
       return { curve, color };
     }).filter(Boolean);
   }, [trafficData]);
@@ -1645,7 +1806,7 @@ const TrafficEngine = ({ roads }: { roads: any[] }) => {
         <boxGeometry args={[1.5, 0.8, 3]} />
         <meshStandardMaterial color="#00d2ff" emissive="#00d2ff" emissiveIntensity={1.5} />
       </instancedMesh>
-      
+
       {/* TomTom Live Traffic Flow Tubes */}
       {tomtomTubes.map((t: any, i: number) => (
         <mesh key={`traffic-${i}`}>
@@ -2122,7 +2283,7 @@ const EVSimulationPanel = ({ landmark, stationMetrics }: { landmark: any, statio
     const baseTraffic = 0.1 + (idHash % 10) / 100;
     let trafficLevel = morningPeak + eveningPeak + baseTraffic;
     if (simData.scenario === "Summer Solar Holiday") trafficLevel *= 0.75;
-    
+
     const carsAtStation = Math.floor(trafficLevel * totalCapacity * 2.0);
     activeSessions = Math.min(carsAtStation, totalCapacity);
     queueLength = carsAtStation > totalCapacity ? carsAtStation - totalCapacity : 0;
@@ -2277,6 +2438,13 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const [isSimRain, setIsSimRain] = useState(false);
   const [weather, setWeather] = useState<any>(null);
 
+  // Streetlight Intelligence state variables
+  const [isStreetlightsSim, setIsStreetlightsSim] = useState(false);
+  const [selectedStreetlight, setSelectedStreetlight] = useState<any>(null);
+  const [selectedStreetlightIndex, setSelectedStreetlightIndex] = useState<number | null>(null);
+  const [streetlightData, setStreetlightData] = useState<any[]>([]);
+
+
   const isLiveNight = weather ? !weather.is_day : false;
   const isLiveRain = weather ? weather.weather_code >= 61 : false;
   const [assetFilters, setAssetFilters] = useState<any>({ all: true });
@@ -2286,7 +2454,16 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const [selectedPhase, setSelectedPhase] = useState<any>(null);
   const [isDriveMode, setIsDriveMode] = useState(false);
   const [isCityTransparent, setIsCityTransparent] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const exportGroupRef = useRef<THREE.Group>(null);
+
+  useEffect(() => {
+    const handleSidebarCollapse = (e: any) => {
+      setIsSidebarCollapsed(e.detail?.collapsed || false);
+    };
+    window.addEventListener('laip-sidebar-collapse', handleSidebarCollapse);
+    return () => window.removeEventListener('laip-sidebar-collapse', handleSidebarCollapse);
+  }, []);
 
   const handleExportGLB = () => {
     if (!exportGroupRef.current) return;
@@ -2314,12 +2491,12 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const [cityOpacity, setCityOpacity] = useState(1.0);
   // EV Simulation state
   const [isEvSim, setIsEvSim] = useState(false);
-  
+
   const [stationMetrics, setStationMetrics] = useState<Record<string, { queue: number, activeCars: any[] }>>({});
 
   useEffect(() => {
     if (!evStations || evStations.length === 0) return;
-    
+
     // Initialize simulation state
     const metrics: Record<string, { queue: number, activeCars: any[] }> = {};
     evStations.forEach(st => {
@@ -2350,7 +2527,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
           const stMetrics = { ...next[st.id], activeCars: [...next[st.id].activeCars] };
           const numChargers = Math.max(1, Math.min(4, Math.floor(st.power / 25)));
           totalCapacity += numChargers;
-          
+
           // Charging logic
           stMetrics.activeCars = stMetrics.activeCars.map(car => ({
             ...car,
@@ -2360,20 +2537,20 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
 
           // Queue logic
           if (stMetrics.queue > 0 && stMetrics.activeCars.length < numChargers) {
-             const occupiedSlots = new Set(stMetrics.activeCars.map(c => c.slotIdx));
-             let freeSlot = 0;
-             while (occupiedSlots.has(freeSlot)) freeSlot++;
-             
-             stMetrics.activeCars.push({
-               slotIdx: freeSlot,
-               battery: 10 + Math.random() * 30,
-               timeRemaining: 15 + Math.random() * 15
-             });
-             stMetrics.queue--;
+            const occupiedSlots = new Set(stMetrics.activeCars.map(c => c.slotIdx));
+            let freeSlot = 0;
+            while (occupiedSlots.has(freeSlot)) freeSlot++;
+
+            stMetrics.activeCars.push({
+              slotIdx: freeSlot,
+              battery: 10 + Math.random() * 30,
+              timeRemaining: 15 + Math.random() * 15
+            });
+            stMetrics.queue--;
           } else if (Math.random() < 0.1) {
-             stMetrics.queue++;
+            stMetrics.queue++;
           }
-          
+
           next[st.id] = stMetrics;
         });
 
@@ -2414,14 +2591,16 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const [expandedGridNode, setExpandedGridNode] = useState<any>(null);
   const [expandedCharger, setExpandedCharger] = useState<any>(null);
   const [showZones, setShowZones] = useState(true);
-  const [zoneNavCollapsed, setZoneNavCollapsed] = useState(false);
+  const [zoneNavCollapsed, setZoneNavCollapsed] = useState(true);
 
   useEffect(() => {
     const handleSim = (e: any) => {
       if (e.detail.type === 'toggle-rain') setIsSimRain(prev => !prev);
       if (e.detail.type === 'toggle-night') setIsSimNight(prev => !prev);
+      if (e.detail.type === 'toggle-streetlights-sim') setIsStreetlightsSim(prev => !prev);
     };
     const handleFilter = (e: any) => setAssetFilters(e.detail);
+
     const handleEvSim = (e: any) => {
       if (e.detail.type === 'toggle-ev-sim') {
         setIsEvSim(prev => !prev);
@@ -2466,6 +2645,28 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
     };
   }, []);
 
+  // Fetch streetlight intelligence metrics periodically
+  useEffect(() => {
+    if (!isHomeCity) return;
+    const fetchStreetlights = async () => {
+      try {
+        const res = await fetch("http://localhost:8001/api/streetlights");
+        const data = await res.json();
+        if (data.streetlights) {
+          setStreetlightData(data.streetlights);
+          // Broadcast to other components like RightPanel
+          window.dispatchEvent(new CustomEvent('laip-streetlight-data', { detail: data.streetlights }));
+        }
+      } catch (e) {
+        console.warn("Failed to fetch streetlights data", e);
+      }
+    };
+    fetchStreetlights();
+    const interval = setInterval(fetchStreetlights, 15000);
+    return () => clearInterval(interval);
+  }, [isHomeCity]);
+
+
   // Broadcast weather state to App.tsx whenever it changes
   useEffect(() => {
     if (weather) {
@@ -2500,15 +2701,15 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
 
     fetch("http://localhost:8001/api/chargers")
       .then(res => res.json())
-      .then(data => { 
+      .then(data => {
         if (data.chargers) {
           const mapped = data.chargers.map((c: any) => ({
             ...c,
             center: [c.position[0], c.position[2]],
             category: 'ev_station'
           }));
-          setEvStations(mapped); 
-        } 
+          setEvStations(mapped);
+        }
       })
       .catch(e => console.error(e));
 
@@ -2572,13 +2773,15 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const masterVisible = assetFilters?.masterVisible !== false;
   const categoryFilters = assetFilters?.categoryFilters;
   const anyCategorySelected = categoryFilters
-    ? (categoryFilters.buildings || categoryFilters.roads || categoryFilters.waterBodies)
+    ? (categoryFilters.buildings || categoryFilters.roads || categoryFilters.waterBodies || categoryFilters.streetlights)
     : false;
 
   const showBuildings = !anyCategorySelected || (categoryFilters?.buildings ?? false);
   const showRoads = !anyCategorySelected || (categoryFilters?.roads ?? false);
   const showWaterBodies = !anyCategorySelected || (categoryFilters?.waterBodies ?? false);
+  const showStreetlights = !anyCategorySelected || (categoryFilters?.streetlights ?? false);
   const showLandmarkPins = masterVisible && !anyCategorySelected;
+
 
   return (
     <div className="flex-1 relative w-full h-full" style={{ backgroundColor: skyColor }}>
@@ -2597,7 +2800,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
 
           {/* ZONES NAVIGATION PANEL — JP Nagar only */}
           {!isDriveMode && isHomeCity && (
-            <div className="absolute top-24 left-[310px] pointer-events-auto z-[500] flex flex-col gap-2" style={{ width: zoneNavCollapsed ? 'auto' : '300px' }}>
+            <div className={`absolute top-24 pointer-events-auto z-[500] flex flex-col gap-2 transition-all duration-300 ${isSidebarCollapsed ? 'left-[120px]' : 'left-[330px]'}`} style={{ width: zoneNavCollapsed ? 'auto' : '300px' }}>
               {/* Unity Export Button */}
               <button
                 onClick={handleExportGLB}
@@ -2682,7 +2885,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
           onClick={() => setIsDriveMode(true)}
           className="absolute bottom-24 right-[360px] bg-black/40 hover:bg-white/10 backdrop-blur-xl text-white font-medium px-6 py-2.5 rounded-full border border-white/20 z-[600] flex items-center gap-2 transition-all shadow-2xl pointer-events-auto"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2" /><circle cx="7" cy="17" r="2" /><path d="M9 17h6" /><circle cx="17" cy="17" r="2" /></svg>
           Enter Vehicle Mode
         </button>
       )}
@@ -2763,6 +2966,18 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
         />
       )}
 
+      {/* Streetlight Intelligence Panel */}
+      {selectedStreetlight && (
+        <StreetlightIntelligencePanel
+          data={selectedStreetlight}
+          onClose={() => {
+            setSelectedStreetlight(null);
+            setSelectedStreetlightIndex(null);
+          }}
+        />
+      )}
+
+
       <Canvas onClick={() => { setExpandedLandmark(null); setExpandedGridNode(null); }} shadows camera={{ position: [0, 800, 1000], fov: 40, far: 500000 }} gl={{ logarithmicDepthBuffer: true }}>
         <color attach="background" args={[skyColor]} />
 
@@ -2815,7 +3030,30 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
             {isHomeCity && showWaterBodies && <DenseForest lakes={cityData?.lakes} isTransparent={isCityTransparent} />}
 
             {/* Streetlights — JP Nagar only */}
-            {isHomeCity && cityData?.roads && showRoads && <StreetlightsLayer roads={cityData.roads} isNight={renderNight} />}
+            {isHomeCity && cityData?.roads && showStreetlights && (
+              <StreetlightsLayer
+                roads={cityData.roads}
+                isNight={renderNight}
+                isStreetlightsSim={isStreetlightsSim}
+                streetlightData={streetlightData}
+                selectedStreetlightIndex={selectedStreetlightIndex}
+                onStreetlightClick={(assetId, index) => {
+                  setSelectedStreetlightIndex(index);
+                  fetch(`http://localhost:8001/api/streetlights/${assetId}`)
+                    .then(r => r.json())
+                    .then(data => {
+                      if (!data.error) {
+                        setSelectedStreetlight(data);
+                      }
+                    })
+                    .catch(err => console.warn(err));
+                }}
+                onFlyTo={(pt) => {
+                  setCameraTarget(new THREE.Vector3(pt.x, 25, pt.z));
+                }}
+              />
+            )}
+
           </group>
 
           {/* Render Landmarks UI — JP Nagar only (Excluded from export) */}

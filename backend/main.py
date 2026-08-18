@@ -6,6 +6,14 @@ import uvicorn
 import asyncio
 import traceback
 import time
+import os
+import sys
+
+# Ensure backend root is in system path for local imports
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from database import get_db_connection, init_db
+from intelligence.inference.streetlight_predictor import predict_single_asset
 
 app = FastAPI(title="LAIP Live Data Backend")
 
@@ -459,5 +467,67 @@ async def get_chargers():
                 
         return {"chargers": chargers}
 
+# Cache for streetlight intelligence state
+STREETLIGHTS_INTEL_CACHE = None
+
+@app.on_event("startup")
+async def startup_event():
+    # Setup database tables and simulate assets/readings if empty
+    init_db()
+    from intelligence.simulators.streetlight_simulator import setup_all
+    setup_all()
+    # Warm up models on load
+    from intelligence.inference.streetlight_predictor import get_detector
+    get_detector()
+
+@app.get("/api/streetlights")
+async def get_streetlights():
+    global STREETLIGHTS_INTEL_CACHE
+    if STREETLIGHTS_INTEL_CACHE is not None:
+        return {"streetlights": STREETLIGHTS_INTEL_CACHE}
+        
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT asset_id FROM assets ORDER BY CAST(SUBSTR(asset_id, 4) AS INTEGER)")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    results = []
+    for r in rows:
+        asset_id = r["asset_id"]
+        res = predict_single_asset(asset_id)
+        if res:
+            results.append(res)
+            
+    STREETLIGHTS_INTEL_CACHE = results
+    return {"streetlights": results}
+
+@app.get("/api/streetlights/{asset_id}")
+async def get_streetlight_detail(asset_id: str):
+    res = predict_single_asset(asset_id)
+    if not res:
+        return {"error": f"Streetlight asset {asset_id} not found"}
+    return res
+
+@app.post("/api/streetlights/run-inference")
+async def run_streetlight_inference():
+    global STREETLIGHTS_INTEL_CACHE
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT asset_id FROM assets ORDER BY CAST(SUBSTR(asset_id, 4) AS INTEGER)")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    results = []
+    for r in rows:
+        asset_id = r["asset_id"]
+        res = predict_single_asset(asset_id)
+        if res:
+            results.append(res)
+            
+    STREETLIGHTS_INTEL_CACHE = results
+    return {"status": "ok", "message": "Inference completed", "count": len(results)}
+
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
+

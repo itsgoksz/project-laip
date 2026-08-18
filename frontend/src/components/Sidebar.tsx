@@ -1,4 +1,4 @@
-import { ChevronRight, ChevronDown, Building2, Layers, Cpu, Wind, CloudRain, Moon, EvCharger, Eye, EyeOff, Zap, Radio, Network } from 'lucide-react';
+import { ChevronRight, ChevronDown, ChevronLeft, Building2, Layers, Cpu, Wind, CloudRain, Moon, EvCharger, Eye, EyeOff, Zap, Radio, Network, Lightbulb } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 const TreeNode = ({ label, icon: Icon, children, defaultExpanded = false }: any) => {
@@ -50,7 +50,7 @@ const CollapsibleSection = ({ title, children, defaultExpanded = true, action }:
   );
 };
 
-export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, assetCounts }: { isNight?: boolean, isRain?: boolean, isEvSim?: boolean, assetCounts?: any }) => {
+export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, isStreetlightsSim = false, assetCounts }: { isNight?: boolean, isRain?: boolean, isEvSim?: boolean, isStreetlightsSim?: boolean, assetCounts?: any }) => {
   const [masterVisible, setMasterVisible] = useState(true);
   const [assetFilters, setAssetFilters] = useState({
     all: true,
@@ -64,8 +64,10 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
   const [assetCategoryFilters, setAssetCategoryFilters] = useState({
     buildings: false,
     roads: false,
-    waterBodies: false
+    waterBodies: false,
+    streetlights: false
   });
+
   const [cityTransparency, setCityTransparency] = useState(0);
 
   useEffect(() => {
@@ -113,27 +115,60 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
     }
   }, [isEvSim]);
 
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('laip-sidebar-collapse', { detail: { collapsed } }));
+  }, [collapsed]);
+
+  if (collapsed) {
+    return (
+      <div
+        onClick={() => setCollapsed(false)}
+        className="relative w-fit h-auto bg-black/40 backdrop-blur-2xl border border-white/10 rounded-2xl p-2 flex flex-row items-center gap-2 pointer-events-auto shadow-2xl cursor-pointer hover:bg-white/5 transition-all group"
+      >
+        <div className="w-8 h-8 rounded-lg bg-laip-cyan/10 flex items-center justify-center border border-laip-cyan/30">
+          <Building2 size={16} className="text-laip-cyan" />
+        </div>
+        <div className="flex items-center justify-center text-gray-400 group-hover:text-white transition-colors pr-1">
+          <ChevronRight size={16} />
+        </div>
+        
+        {/* Custom Tooltip */}
+        <div className="absolute left-full ml-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/80 text-white text-xs px-3 py-1.5 rounded whitespace-nowrap border border-white/20 shadow-xl z-50">
+          LAIP Management System
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full h-full bg-black/40 backdrop-blur-2xl border border-white/10 rounded-[2rem] p-5 flex flex-col pointer-events-auto overflow-y-auto shadow-2xl custom-scrollbar">
       <div className="mb-6 flex items-center gap-3">
         <div className="w-10 h-10 rounded-lg bg-laip-cyan/10 flex items-center justify-center border border-laip-cyan/30 shadow-[0_0_15px_rgba(0,240,255,0.2)]">
           <Building2 size={20} className="text-laip-cyan" />
         </div>
-        <div>
+        <div className="flex-1">
           <div className="flex items-start gap-2">
             <h1 className="text-lg font-bold tracking-wider leading-tight">
               LAIP
             </h1>
-
             <span className="text-[9px] text-gray-400 font-medium mt-0.5">
               v1.0.0
             </span>
           </div>
-
           <div className="text-[10px] text-laip-cyan uppercase tracking-widest font-semibold">
             Management System
           </div>
         </div>
+        {/* Collapse button */}
+        <button
+          onClick={() => setCollapsed(true)}
+          title="Collapse sidebar"
+          className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-gray-400 hover:text-laip-cyan transition-all cursor-pointer shrink-0"
+        >
+          <ChevronLeft size={14} />
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
@@ -230,8 +265,10 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
             {[
               { id: 'buildings', label: 'Structural Buildings' },
               { id: 'roads', label: 'Roads' },
-              { id: 'waterBodies', label: 'Water bodies' }
+              { id: 'waterBodies', label: 'Water bodies' },
+              { id: 'streetlights', label: 'Street Lights' }
             ].map(item => (
+
               <label key={item.id} className="flex items-center gap-3 cursor-pointer group transition-colors ml-[32px] py-0.5">
                 <input
                   type="checkbox"
@@ -320,8 +357,20 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, asse
               <span>Night View</span>
               {isNight && <span className="ml-auto text-[10px] font-bold text-indigo-400 uppercase tracking-wider">ON</span>}
             </button>
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('laip-sim', { detail: { type: 'toggle-streetlights-sim' } }))}
+              className={`w-full flex items-center p-2 rounded text-sm transition-all border cursor-pointer ${isStreetlightsSim
+                ? 'bg-yellow-500/20 border-yellow-500/50 text-yellow-300 shadow-[0_0_10px_rgba(234,179,8,0.3)]'
+                : 'hover:bg-white/10 border-transparent text-gray-200'
+                }`}
+            >
+              <Lightbulb size={16} className={`mr-3 ${isStreetlightsSim ? 'text-yellow-400' : 'text-yellow-400/60'}`} />
+              <span>Streetlights</span>
+              {isStreetlightsSim && <span className="ml-auto text-[10px] font-bold text-yellow-400 uppercase tracking-wider">ON</span>}
+            </button>
           </div>
         </CollapsibleSection>
+
 
         <CollapsibleSection title="Simulation Use Cases" defaultExpanded>
           <div className="space-y-1">
