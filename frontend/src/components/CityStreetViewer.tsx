@@ -837,7 +837,7 @@ const PowerGridExpandedPanel = ({ node, onClose }: { node: any, onClose: () => v
 };
 
 // Animated electricity flow along a curve using a GPU Shader
-const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: THREE.Vector3[], color: string, particleColor: string, isHub: boolean }) => {
+const ElectricityPipeline = ({ points, color, particleColor, isHub, intensity = 0.5 }: { points: THREE.Vector3[], color: string, particleColor: string, isHub: boolean, intensity?: number }) => {
   const shaderRef = useRef<THREE.ShaderMaterial>(null);
 
   const curve = useMemo(() => {
@@ -857,7 +857,10 @@ const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: 
 
   useFrame((_, delta) => {
     if (shaderRef.current) {
-      shaderRef.current.uniforms.uTime.value += delta * (isHub ? 1.5 : 2.5);
+      const baseSpeed = isHub ? 1.5 : 2.5;
+      const dynamicSpeed = baseSpeed + (intensity * 4.0); // Speed scales with intensity
+      shaderRef.current.uniforms.uTime.value += delta * dynamicSpeed;
+      shaderRef.current.uniforms.uIntensity.value = intensity;
     }
   });
 
@@ -865,7 +868,8 @@ const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: 
     uTime: { value: 0 },
     uColor: { value: new THREE.Color(color) },
     uPulseColor: { value: new THREE.Color(particleColor) },
-  }), [color, particleColor]);
+    uIntensity: { value: intensity }
+  }), [color, particleColor, intensity]);
 
   if (!curve || !tubeGeo) return null;
 
@@ -887,6 +891,7 @@ const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: 
             uniform float uTime;
             uniform vec3 uColor;
             uniform vec3 uPulseColor;
+            uniform float uIntensity;
             varying vec2 vUv;
             
             void main() {
@@ -895,7 +900,12 @@ const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: 
               pulse = smoothstep(0.7, 1.0, pulse);
               
               vec3 finalColor = mix(uColor, uPulseColor, pulse);
-              float alpha = mix(0.3, 0.9, pulse);
+              
+              // Boost emissive effect based on load intensity
+              float brightnessBoost = 1.0 + (uIntensity * 2.0);
+              finalColor *= brightnessBoost;
+
+              float alpha = mix(0.3, 0.9, pulse) * (0.5 + uIntensity * 0.5);
               
               gl_FragColor = vec4(finalColor, alpha);
             }
@@ -925,13 +935,14 @@ const ElectricityPipeline = ({ points, color, particleColor, isHub }: { points: 
 };
 
 // Full EV Simulation overlay layer
-const EVSimulationLayer = ({ evStations, buildings, roads, onFlyTo, onExpand, focusedNode }: {
+const EVSimulationLayer = ({ evStations, buildings, roads, onFlyTo, onExpand, focusedNode, stationMetrics }: {
   evStations: any[],
   buildings: any[],
   roads?: any[],
   onFlyTo: (n: any) => void,
   onExpand: (n: any) => void,
   focusedNode: any,
+  stationMetrics: any
 }) => {
 
   // Trigger wide view zoom on mount (once)
@@ -939,6 +950,8 @@ const EVSimulationLayer = ({ evStations, buildings, roads, onFlyTo, onExpand, fo
     onFlyTo({ center: [0, 0], y: 2500 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+
 
   // Use static buildings for the Hub and sub-stations
   const { hub, substations, evToSubMap } = useMemo(() => {
@@ -1086,13 +1099,33 @@ const EVSimulationLayer = ({ evStations, buildings, roads, onFlyTo, onExpand, fo
             {myEVStations.map((ev, evIdx) => {
               const undergroundPath = evPaths[subIdx]?.[evIdx];
               if (!undergroundPath || undergroundPath.length < 2) return null;
+              
+              // Compute dynamic pipeline stress from live metrics
+              const metrics = stationMetrics?.[ev.id];
+              let pipeIntensity = 0.2; // idle baseline
+              let pipeColor = "#eab308";
+              let pulseColor = "#fde047";
+
+              if (metrics) {
+                const numChargers = Math.max(1, Math.min(4, Math.floor(ev.power / 25)));
+                const loadRatio = metrics.activeCars.length / numChargers;
+                pipeIntensity = 0.2 + (loadRatio * 0.8);
+                
+                // If maxed out, shift pipeline to an intense amber/red to indicate grid stress
+                if (loadRatio >= 1.0) {
+                  pipeColor = "#ea580c"; // orange-600
+                  pulseColor = "#f97316"; // orange-500
+                }
+              }
+
               return (
                 <ElectricityPipeline
                   key={`sub-${sub.id}-ev-${ev.id}`}
                   points={undergroundPath}
-                  color="#eab308"
-                  particleColor="#fde047"
+                  color={pipeColor}
+                  particleColor={pulseColor}
                   isHub={false}
+                  intensity={pipeIntensity}
                 />
               );
             })}
@@ -1103,7 +1136,7 @@ const EVSimulationLayer = ({ evStations, buildings, roads, onFlyTo, onExpand, fo
   );
 };
 
-const EVStationsLayer = ({ stations, roads, onFlyTo, onExpand, focusedLandmark, assetFilters }: { stations: any[], roads?: any[], onFlyTo: (st: any) => void, onExpand: (st: any) => void, focusedLandmark: any, assetFilters?: any }) => {
+const EVStationsLayer = ({ stations, roads, onFlyTo, onExpand, focusedLandmark, assetFilters, onChargerClick, stationMetrics }: { stations: any[], roads?: any[], onFlyTo: (st: any) => void, onExpand: (st: any) => void, focusedLandmark: any, assetFilters?: any, onChargerClick: (data: any) => void, stationMetrics: any }) => {
   const visibleStations = useMemo(() => {
     if (!assetFilters || assetFilters.all || assetFilters.evStations) {
       return stations.map(st => {
@@ -1206,7 +1239,11 @@ const EVStationsLayer = ({ stations, roads, onFlyTo, onExpand, focusedLandmark, 
               scale={[1.5, 1.5, 1.5]} 
               rotation={[0, st.rotation || 0, 0]} 
               data={st}
-              onChargerClick={(data) => setExpandedCharger(data)}
+              simMetrics={stationMetrics[st.id]}
+              onChargerClick={(data) => {
+                console.log("Setting expanded charger data:", data);
+                onChargerClick(data);
+              }}
             />
 
             {/* Interactive Floating Box */}
@@ -2042,7 +2079,7 @@ const LiveMinimap = ({ roads, telemetryRef }: { roads: any[], telemetryRef: any 
 // MAIN SCENE
 // ==========================================
 
-const EVSimulationPanel = ({ landmark }: { landmark: any }) => {
+const EVSimulationPanel = ({ landmark, stationMetrics }: { landmark: any, stationMetrics?: any }) => {
   const [simData, setSimData] = useState({ progress: 50, scenario: "Peak Load Test" });
 
   useEffect(() => {
@@ -2063,31 +2100,40 @@ const EVSimulationPanel = ({ landmark }: { landmark: any }) => {
     return hash;
   }, [landmark.id]);
 
-  const timeOffset = (idHash % 20) - 10;
-  const hour = (simData.progress / 100) * 24;
+  const totalCapacity = Math.max(1, Math.min(4, Math.floor((landmark.power || 50) / 25)));
 
-  const morningPeak = Math.exp(-Math.pow(hour - (9 + timeOffset / 10), 2) / 4);
-  const eveningPeak = Math.exp(-Math.pow(hour - (18 + timeOffset / 10), 2) / 4);
-  const baseTraffic = 0.1 + (idHash % 10) / 100;
+  // Use real simulation data if available
+  let activeSessions = 0;
+  let queueLength = 0;
+  let waitTimeMins = 0;
+  let totalPowerDraw = 0;
 
-  const totalCapacity = landmark.connections ? landmark.connections.length : 2;
-
-  // Traffic Reduction for Summer Solar Holiday
-  let trafficLevel = morningPeak + eveningPeak + baseTraffic;
-  if (simData.scenario === "Summer Solar Holiday") {
-    trafficLevel *= 0.75; // 25% traffic reduction
+  if (stationMetrics) {
+    activeSessions = stationMetrics.activeCars.length;
+    queueLength = stationMetrics.queue;
+    waitTimeMins = queueLength * 15; // 15 mins avg wait per car in queue
+    totalPowerDraw = activeSessions * 50;
+  } else {
+    // Fallback to static mock logic if sim metrics aren't ready
+    const timeOffset = (idHash % 20) - 10;
+    const hour = (simData.progress / 100) * 24;
+    const morningPeak = Math.exp(-Math.pow(hour - (9 + timeOffset / 10), 2) / 4);
+    const eveningPeak = Math.exp(-Math.pow(hour - (18 + timeOffset / 10), 2) / 4);
+    const baseTraffic = 0.1 + (idHash % 10) / 100;
+    let trafficLevel = morningPeak + eveningPeak + baseTraffic;
+    if (simData.scenario === "Summer Solar Holiday") trafficLevel *= 0.75;
+    
+    const carsAtStation = Math.floor(trafficLevel * totalCapacity * 2.0);
+    activeSessions = Math.min(carsAtStation, totalCapacity);
+    queueLength = carsAtStation > totalCapacity ? carsAtStation - totalCapacity : 0;
+    waitTimeMins = activeSessions > 0 ? Math.round((queueLength * 30) / activeSessions) : 0;
+    totalPowerDraw = activeSessions * (40 + (idHash % 20));
   }
-
-  // Multiply by 2 to simulate multiple cars per charger during peak hours
-  const carsAtStation = Math.floor(trafficLevel * totalCapacity * 2.0);
-  const activeSessions = Math.min(carsAtStation, totalCapacity);
-  const queueLength = carsAtStation > totalCapacity ? carsAtStation - totalCapacity : 0;
-  const waitTimeMins = activeSessions > 0 ? Math.round((queueLength * 30) / activeSessions) : 0;
-  const totalPowerDraw = activeSessions * (40 + (idHash % 20));
 
   // Solar Generation Logic (Peaks heavily around 1 PM)
   let solarPower = 0;
   if (simData.scenario === "Summer Solar Holiday") {
+    const hour = (simData.progress / 100) * 24;
     const solarCurve = Math.exp(-Math.pow(hour - 13, 2) / 8);
     // Assuming each charger spot has 20kW of solar capacity roof
     solarPower = Math.round(solarCurve * (totalCapacity * 20));
@@ -2139,7 +2185,10 @@ const EVSimulationPanel = ({ landmark }: { landmark: any }) => {
   );
 };
 
-const ExpandedLandmarkPanel = ({ landmark, onClose, onStartDriving }: { landmark: any, onClose: () => void, onStartDriving: () => void }) => {
+// ==========================================
+// EXPANDED LANDMARK PANEL (Zeon Hubs, Bescom Nodes)
+// ==========================================
+const ExpandedLandmarkPanel = ({ landmark, onClose, onStartDriving, stationMetrics }: { landmark: any, onClose: () => void, onStartDriving: () => void, stationMetrics?: any }) => {
   if (!landmark) return null;
   const colorObj = getCategoryColor(landmark.category);
   return (
@@ -2156,7 +2205,7 @@ const ExpandedLandmarkPanel = ({ landmark, onClose, onStartDriving }: { landmark
         </div>
 
         <div className="space-y-4">
-          {landmark.category === 'ev_station' && <EVSimulationPanel landmark={landmark} />}
+          {landmark.category === 'ev_station' && <EVSimulationPanel landmark={landmark} stationMetrics={stationMetrics?.[landmark.id]} />}
 
           <div className="bg-white/5 p-4 rounded-xl border border-white/10">
             <div className="text-xs text-gray-400 uppercase tracking-widest mb-1.5">Status</div>
@@ -2265,6 +2314,85 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const [cityOpacity, setCityOpacity] = useState(1.0);
   // EV Simulation state
   const [isEvSim, setIsEvSim] = useState(false);
+  
+  const [stationMetrics, setStationMetrics] = useState<Record<string, { queue: number, activeCars: any[] }>>({});
+
+  useEffect(() => {
+    if (!evStations || evStations.length === 0) return;
+    
+    // Initialize simulation state
+    const metrics: Record<string, { queue: number, activeCars: any[] }> = {};
+    evStations.forEach(st => {
+      const numChargers = Math.max(1, Math.min(4, Math.floor(st.power / 25)));
+      const activeCars = [];
+      const numActive = Math.floor(Math.random() * (numChargers + 1));
+      for (let i = 0; i < numActive; i++) {
+        activeCars.push({
+          slotIdx: i,
+          battery: 10 + Math.random() * 70,
+          timeRemaining: Math.floor(Math.random() * 30) + 5
+        });
+      }
+      metrics[st.id] = { queue: Math.floor(Math.random() * 3), activeCars };
+    });
+    setStationMetrics(metrics);
+
+    // Simulation Loop
+    const interval = setInterval(() => {
+      setStationMetrics(prev => {
+        const next = { ...prev };
+        let totalActive = 0;
+        let totalLoad = 0;
+        let totalCapacity = 0;
+
+        evStations.forEach(st => {
+          if (!next[st.id]) return;
+          const stMetrics = { ...next[st.id], activeCars: [...next[st.id].activeCars] };
+          const numChargers = Math.max(1, Math.min(4, Math.floor(st.power / 25)));
+          totalCapacity += numChargers;
+          
+          // Charging logic
+          stMetrics.activeCars = stMetrics.activeCars.map(car => ({
+            ...car,
+            battery: Math.min(100, car.battery + 1.5),
+            timeRemaining: Math.max(0, car.timeRemaining - 1)
+          })).filter(car => car.timeRemaining > 0);
+
+          // Queue logic
+          if (stMetrics.queue > 0 && stMetrics.activeCars.length < numChargers) {
+             const occupiedSlots = new Set(stMetrics.activeCars.map(c => c.slotIdx));
+             let freeSlot = 0;
+             while (occupiedSlots.has(freeSlot)) freeSlot++;
+             
+             stMetrics.activeCars.push({
+               slotIdx: freeSlot,
+               battery: 10 + Math.random() * 30,
+               timeRemaining: 15 + Math.random() * 15
+             });
+             stMetrics.queue--;
+          } else if (Math.random() < 0.1) {
+             stMetrics.queue++;
+          }
+          
+          next[st.id] = stMetrics;
+          totalActive += stMetrics.activeCars.length;
+          totalLoad += stMetrics.activeCars.length * 50; 
+        });
+
+        window.dispatchEvent(new CustomEvent('laip-ev-sim-metrics', {
+          detail: {
+            gridMW: 15.2 + (totalLoad / 1000),
+            activePercentage: totalCapacity > 0 ? (totalActive / totalCapacity) * 100 : 0
+          }
+        }));
+
+        return next;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [evStations]);
+
   const [focusedGridNode, setFocusedGridNode] = useState<any>(null);
   const [expandedGridNode, setExpandedGridNode] = useState<any>(null);
   const [expandedCharger, setExpandedCharger] = useState<any>(null);
@@ -2595,6 +2723,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
             setExpandedLandmark(null);
             setIsDriveMode(true);
           }}
+          stationMetrics={stationMetrics}
         />
       )}
 
@@ -2610,7 +2739,10 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
       {expandedCharger && (
         <SemanticAssetPanel
           data={expandedCharger}
-          onClose={() => setExpandedCharger(null)}
+          onClose={() => {
+            console.log("Closing expanded charger");
+            setExpandedCharger(null);
+          }}
         />
       )}
 
@@ -2697,6 +2829,8 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
               onExpand={handleExpand}
               focusedLandmark={focusedLandmark}
               assetFilters={assetFilters}
+              onChargerClick={setExpandedCharger}
+              stationMetrics={stationMetrics}
             />
           )}
 
@@ -2714,6 +2848,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
               }}
               onExpand={(node) => setExpandedGridNode(node)}
               focusedNode={focusedGridNode}
+              stationMetrics={stationMetrics}
             />
           )}
 

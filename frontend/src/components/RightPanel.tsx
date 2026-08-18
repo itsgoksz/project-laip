@@ -16,6 +16,17 @@ const EV_ACTIVE_KW = +(TOTAL_EV_STATIONS * EV_KW_PER_STATION * EV_ACTIVE_RATE).t
 export const RightPanel = ({ isNight, isRain, isEvSim, rainIntensity, cameraMode }: any) => {
   const [transparency, setTransparency] = useState(50);
   const [pressedKeys, setPressedKeys] = useState<Record<string, boolean>>({});
+  const [simMetrics, setSimMetrics] = useState({ gridMW: TOTAL_GRID_MW, activePercentage: EV_ACTIVE_RATE * 100 });
+
+  useEffect(() => {
+    const handleSimMetrics = (e: any) => {
+      if (e.detail) {
+        setSimMetrics(prev => ({ ...prev, ...e.detail }));
+      }
+    };
+    window.addEventListener('laip-ev-sim-metrics', handleSimMetrics);
+    return () => window.removeEventListener('laip-ev-sim-metrics', handleSimMetrics);
+  }, []);
 
   useEffect(() => {
     if (cameraMode !== 'drone') return;
@@ -90,9 +101,9 @@ export const RightPanel = ({ isNight, isRain, isEvSim, rainIntensity, cameraMode
     const id = setInterval(() => setEvTick(t => t + 1), 3000);
     return () => clearInterval(id);
   }, [isEvSim]);
-  const liveGridMW = isEvSim ? (TOTAL_GRID_MW + (Math.sin(evTick * 0.7) * 0.18)).toFixed(2) : '—';
-  const liveEvKW = isEvSim ? Math.max(0, EV_ACTIVE_KW + Math.round(Math.sin(evTick * 1.3) * 15)).toString() : '—';
-  const gridStatus = parseFloat(liveGridMW as string) > 10 ? { text: 'High Load', color: 'text-orange-400' } : { text: 'Nominal', color: 'text-laip-cyan' };
+  const liveGridMW = isEvSim ? simMetrics.gridMW.toFixed(2) : '—';
+  const liveEvActivePercentage = isEvSim ? Math.round(simMetrics.activePercentage).toString() : '—';
+  const gridStatus = isEvSim && simMetrics.gridMW > 10 ? { text: 'High Load', color: 'text-orange-400' } : { text: 'Nominal', color: 'text-laip-cyan' };
 
   // Pipeline dim side vs building dim side
   const isPipelineDim = transparency < 50;
@@ -159,8 +170,9 @@ export const RightPanel = ({ isNight, isRain, isEvSim, rainIntensity, cameraMode
                     <span className="flex items-center gap-1"><Radio size={10} className="text-green-400" /> EV Charging Load</span>
                     <span className="text-green-400">Active</span>
                   </div>
-                  <div className="text-2xl font-mono text-white flex items-end gap-1">
-                    {liveEvKW} <span className="text-sm text-gray-500 mb-1">kW</span>
+                  <div className="flex justify-between items-end">
+                    <div className="text-3xl font-light text-white tracking-tight leading-none">{liveEvActivePercentage}<span className="text-sm text-gray-500 ml-1">%</span></div>
+                    <div className="text-[9px] uppercase tracking-wider text-orange-400 font-semibold mb-1">High Demand</div>
                   </div>
                   <div className="mt-1 text-[10px] text-gray-500">
                     {TOTAL_EV_STATIONS} stations × {EV_KW_PER_STATION} kW DC fast charge

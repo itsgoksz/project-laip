@@ -1,23 +1,24 @@
 import React, { useState } from 'react';
 import { Box, Cylinder, Text, Edges } from '@react-three/drei';
 
-export const ZeonCharger = ({ position, data, onClick }: { position: [number, number, number], data?: any, onClick?: () => void }) => {
+export const ZeonCharger = ({ position, data, onClick, simMetrics }: { position: [number, number, number], data?: any, onClick?: () => void, simMetrics?: any }) => {
   const [hovered, setHovered] = useState(false);
 
   return (
-    <group 
-      position={position} 
-      scale={[0.8, 0.8, 0.8]}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (onClick) onClick();
-      }}
-      onPointerOver={(e) => { e.stopPropagation(); setHovered(true); document.body.style.cursor = 'pointer'; }}
-      onPointerOut={(e) => { setHovered(false); document.body.style.cursor = 'auto'; }}
-    >
+    <group position={position} scale={[0.8, 0.8, 0.8]}>
       {/* Interactive Cyber Bounding Box */}
-      <mesh visible={false} position={[0, 1.1, 0]}>
+      <mesh 
+        position={[0, 1.1, 0]}
+        onClick={(e) => {
+          console.log("ZeonCharger clicked!");
+          e.stopPropagation();
+          if (onClick) onClick();
+        }}
+        onPointerOver={(e) => { e.stopPropagation(); setHovered(true); document.body.style.cursor = 'pointer'; }}
+        onPointerOut={(e) => { setHovered(false); document.body.style.cursor = 'auto'; }}
+      >
          <boxGeometry args={[1.4, 2.5, 1.2]} />
+         <meshBasicMaterial transparent opacity={0.01} depthWrite={false} />
       </mesh>
       
       {hovered && (
@@ -57,6 +58,38 @@ export const ZeonCharger = ({ position, data, onClick }: { position: [number, nu
       <Box args={[0.82, 0.5, 0.62]} position={[0, 1.95, 0.02]} castShadow receiveShadow>
         <meshStandardMaterial color="#d3152a" roughness={0.3} />
       </Box>
+
+      {/* Holographic Vehicle & Charging status */}
+      {simMetrics && (
+        <group position={[0, 0, 3]}>
+          {/* Abstract vehicle silhouette */}
+          <mesh position={[0, 0.75, 0]}>
+            <boxGeometry args={[1.8, 1.5, 4]} />
+            <meshStandardMaterial color="#00f0ff" transparent opacity={0.15} wireframe />
+          </mesh>
+          <mesh position={[0, 0.75, 0]}>
+            <boxGeometry args={[1.7, 1.4, 3.9]} />
+            <meshStandardMaterial color="#ffffff" transparent opacity={0.05} depthWrite={false} />
+          </mesh>
+          {/* Dynamic charging cable from charger to car */}
+          <mesh position={[0, 0.5, -1.5]}>
+             <cylinderGeometry args={[0.02, 0.02, 3]} />
+             <meshStandardMaterial color="#22c55e" emissive="#22c55e" emissiveIntensity={2} />
+          </mesh>
+          {/* Floating UI above car */}
+          <group position={[0, 2.5, 0]}>
+             <Box args={[2.5, 0.6, 0.05]} position={[0, 0, 0]}>
+               <meshBasicMaterial color="#000000" transparent opacity={0.7} />
+             </Box>
+             <Text position={[0, 0.15, 0.03]} fontSize={0.2} color="#00f0ff" fontWeight="bold">
+               {Math.round(simMetrics.battery)}% CHARGED
+             </Text>
+             <Text position={[0, -0.15, 0.03]} fontSize={0.12} color="#22c55e" fontWeight="bold">
+               {Math.round(simMetrics.timeRemaining)} MINS REMAINING
+             </Text>
+          </group>
+        </group>
+      )}
       <Text position={[0, 2.05, 0.35]} fontSize={0.18} color="#ffffff" fontWeight="bold" letterSpacing={0.1}>
         ZEON
       </Text>
@@ -269,20 +302,23 @@ export const ZeonHubModel = ({
   scale = [1, 1, 1],
   numChargers = 3,
   data,
-  onChargerClick
+  onChargerClick,
+  simMetrics
 }: { 
   position?: [number, number, number], 
   rotation?: [number, number, number],
   scale?: [number, number, number],
   numChargers?: number,
   data?: any,
-  onChargerClick?: (data: any) => void
+  onChargerClick?: (data: any) => void,
+  simMetrics?: any
 }) => {
   const chargers = [];
   const startX = -((numChargers - 1) * 3) / 2;
   
   for (let i = 0; i < numChargers; i++) {
-    chargers.push(<ZeonCharger key={i} position={[startX + i * 3, 0, 1]} data={data} onClick={() => onChargerClick && onChargerClick(data)} />);
+    const activeCar = simMetrics?.activeCars?.find((c: any) => c.slotIdx === i);
+    chargers.push(<ZeonCharger key={i} position={[startX + i * 3, 0, 1]} data={data} onClick={() => onChargerClick && onChargerClick(data)} simMetrics={activeCar} />);
   }
 
   const signPosX = -((Math.max(1, numChargers) * 4.5 + 4) / 2) - 1.5;
