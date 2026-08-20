@@ -5,6 +5,7 @@ export const BottomBar = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [scenario, setScenario] = useState("Peak Load Test");
+  const [speed, setSpeed] = useState("1x");
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
@@ -23,6 +24,10 @@ export const BottomBar = () => {
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('sim-progress', { detail: { progress, scenario } }));
   }, [progress, scenario]);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('sim-speed', { detail: { speed } }));
+  }, [speed]);
 
   return (
     <div className="h-14 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full flex items-center px-6 z-10 shadow-2xl min-w-[600px] pointer-events-auto">
@@ -68,7 +73,19 @@ export const BottomBar = () => {
         </div>
       </div>
       
-      <div className="w-64 flex justify-end">
+      <div className="w-[320px] flex justify-end gap-4">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Speed:</span>
+          <select 
+            className="bg-black/40 border border-white/20 text-gray-300 text-xs rounded px-2 py-1 outline-none focus:border-laip-cyan/50"
+            value={speed}
+            onChange={(e) => setSpeed(e.target.value)}
+          >
+            <option value="1x">1x (Real-time)</option>
+            <option value="100x">100x (Time-lapse)</option>
+            <option value="instant">Instant Projection</option>
+          </select>
+        </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-500">Scenario:</span>
           <select 
@@ -76,8 +93,8 @@ export const BottomBar = () => {
             value={scenario}
             onChange={(e) => setScenario(e.target.value)}
           >
-            <option value="Peak Load Test">Peak Load Test</option>
-            <option value="Summer Solar Holiday">Summer Solar Holiday</option>
+            <option value="Peak Load Test">Peak Load</option>
+            <option value="Summer Solar Holiday">Solar Holiday</option>
           </select>
         </div>
       </div>
