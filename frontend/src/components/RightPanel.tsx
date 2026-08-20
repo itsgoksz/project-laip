@@ -1,5 +1,169 @@
-import { useState, useEffect } from 'react';
-import { Activity, MessageSquare, Sliders, Zap, Radio, RefreshCw, Navigation, AlertTriangle, CheckCircle2, Lightbulb, ArrowUpRight, ChevronRight, ChevronLeft } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Activity, MessageSquare, Sliders, Zap, Radio, RefreshCw, Navigation, AlertTriangle, CheckCircle2, Lightbulb, ArrowUpRight, ChevronRight, ChevronLeft, Send, Loader2, X } from 'lucide-react';
+
+const COPILOT_API = 'http://localhost:8001/api/copilot';
+const SAMPLE_QUESTION = 'What happens to the local grid if 10 EV chargers pull max power?';
+
+type CopilotTurn = { role: 'user' | 'assistant'; content: string };
+
+const CopilotModal = ({
+  open,
+  onClose,
+  uiState,
+}: {
+  open: boolean;
+  onClose: () => void;
+  uiState: Record<string, unknown>;
+}) => {
+  const [input, setInput] = useState('');
+  const [messages, setMessages] = useState<CopilotTurn[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    document.body.style.overflow = 'hidden';
+    const t = setTimeout(() => inputRef.current?.focus(), 80);
+    return () => {
+      document.body.style.overflow = 'auto';
+      clearTimeout(t);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, loading]);
+
+  const sendMessage = async (text: string) => {
+    const message = text.trim();
+    if (!message || loading) return;
+    setError('');
+    setInput('');
+    const nextHistory = [...messages, { role: 'user' as const, content: message }];
+    setMessages(nextHistory);
+    setLoading(true);
+    try {
+      const res = await fetch(COPILOT_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          history: nextHistory.slice(0, -1),
+          ui_state: uiState,
+        }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setError(data.error);
+        setMessages(prev => [...prev, { role: 'assistant', content: 'I could not complete that request. Please try again.' }]);
+      } else {
+        setMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+      }
+    } catch {
+      setError('Could not reach the LAIP backend.');
+      setMessages(prev => [...prev, { role: 'assistant', content: 'The copilot backend is unreachable. Confirm the API is running on port 8001.' }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[10000] flex items-end justify-end p-6 pointer-events-auto"
+      onWheel={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-md origin-bottom-right">
+        <div className="bg-[#0f141e]/95 backdrop-blur-xl border border-laip-cyan/30 rounded-2xl shadow-[0_0_40px_rgba(0,240,255,0.12)] flex flex-col overflow-hidden" style={{ maxHeight: 'min(72vh, 560px)', height: '560px' }}>
+          <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-laip-cyan/5">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-laip-cyan/15 border border-laip-cyan/30 flex items-center justify-center">
+                <MessageSquare size={14} className="text-laip-cyan" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-white">AI Copilot</div>
+                <div className="text-[10px] text-gray-500 uppercase tracking-widest">LAIP assistant</div>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-black/40 border border-white/10 flex items-center justify-center text-gray-400 hover:text-white hover:border-white/30 cursor-pointer"
+              title="Close copilot"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          <div ref={listRef} className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3 min-h-0">
+            {messages.length === 0 && (
+              <div className="space-y-3">
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  Ask about assets, navigation, simulations, streetlight health, or the trained anomaly model. Off-topic questions are declined.
+                </p>
+                <button
+                  onClick={() => sendMessage(SAMPLE_QUESTION)}
+                  className="w-full text-left text-sm text-gray-300 italic bg-black/40 border border-white/10 hover:border-laip-cyan/40 rounded-lg px-3 py-2.5 cursor-pointer transition-colors"
+                >
+                  "{SAMPLE_QUESTION}"
+                </button>
+              </div>
+            )}
+            {messages.map((m, i) => (
+              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap ${m.role === 'user'
+                      ? 'bg-laip-cyan/20 border border-laip-cyan/30 text-white'
+                      : 'bg-white/5 border border-white/10 text-gray-200'
+                    }`}
+                >
+                  {m.content}
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div className="flex items-center gap-2 text-xs text-laip-cyan">
+                <Loader2 size={14} className="animate-spin" />
+                <span>Generating response…</span>
+              </div>
+            )}
+            {error && <div className="text-[11px] text-red-400">{error}</div>}
+          </div>
+
+          <form
+            className="p-3 border-t border-white/10 flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              sendMessage(input);
+            }}
+          >
+            <input
+              ref={inputRef}
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask about LAIP..."
+              disabled={loading}
+              className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-laip-cyan/50 disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              className="w-9 h-9 rounded-lg bg-laip-cyan/20 border border-laip-cyan/40 flex items-center justify-center text-laip-cyan hover:bg-laip-cyan/30 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              title="Send"
+            >
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // Computed from BESCOM mock data
 const SUB_CAPACITIES = [
@@ -19,6 +183,7 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
   const [simMetrics, setSimMetrics] = useState({ gridMW: TOTAL_GRID_MW, activePercentage: EV_ACTIVE_RATE * 100 });
   const [streetlightData, setStreetlightData] = useState<any[]>([]);
   const [collapsed, setCollapsed] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
 
   const isStreetlightsActive = isStreetlightsSim || isStreetlightsAssetFilter;
 
@@ -39,7 +204,7 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
       }
     };
     window.addEventListener('laip-streetlight-data', handleData);
-    
+
     // Fallback fetch on mount in case data was already loaded before mount
     const fetchInitial = async () => {
       try {
@@ -164,7 +329,7 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
         <div className="w-8 h-8 rounded-lg bg-laip-orange/10 flex items-center justify-center border border-laip-orange/30">
           <Activity size={16} className="text-laip-orange" />
         </div>
-        
+
         {/* Custom Tooltip */}
         <div className="absolute right-full mr-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/80 text-white text-xs px-3 py-1.5 rounded whitespace-nowrap border border-white/20 shadow-xl z-50">
           Live Telemetry Data
@@ -199,7 +364,7 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
                     <span className="flex items-center gap-1.5"><Activity size={12} className="text-laip-cyan" /> Streetlights Overview</span>
                     <span className="text-[10px] bg-laip-cyan/25 text-laip-cyan px-2 py-0.5 rounded font-bold uppercase tracking-wider">Live</span>
                   </div>
-                  
+
                   {/* Grid stats */}
                   <div className="grid grid-cols-2 gap-2 text-center mb-2.5">
                     <div className="bg-black/35 border border-white/5 p-2 rounded">
@@ -234,7 +399,7 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
                     <span className="flex items-center gap-1.5 text-red-400"><AlertTriangle size={12} /> Maintenance Queue</span>
                     <span className="text-[9px] text-gray-500">{displayFaultyLights.length} issues</span>
                   </div>
-                  
+
                   {displayFaultyLights.length === 0 ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-center p-4 bg-black/20 rounded border border-white/5">
                       <CheckCircle2 size={24} className="text-green-400 mb-2" />
@@ -265,7 +430,7 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
                                 </div>
                               </div>
                             </div>
-                            
+
                             <button
                               onClick={() => {
                                 window.dispatchEvent(new CustomEvent('laip-streetlight-flyto', { detail: { assetId: light.asset_id } }));
@@ -322,9 +487,16 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
                         {SUB_CAPACITIES.map((s, i) => (
                           <div key={i} className="flex justify-between mt-0.5">
                             <span>{s.name}</span>
-                            <span className="text-yellow-400/70">{(s.capacity * s.loadFactor * 0.9).toFixed(2)} MW</span>
+                            <span className="text-white font-medium">{(s.capacity * s.loadFactor).toFixed(1)} MW</span>
                           </div>
                         ))}
+
+                        <button
+                          onClick={() => window.dispatchEvent(new CustomEvent('laip-open-ev-dashboard'))}
+                          className="w-full mt-3 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 font-bold tracking-widest uppercase rounded border border-amber-500/30 transition-colors"
+                        >
+                          View Daily Analytics
+                        </button>
                       </div>
                     </div>
 
@@ -519,22 +691,34 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
         </section>
       )}
 
-      {/* AI Copilot Placeholder */}
       <div className="mt-4 pt-4 border-t border-laip-border">
-        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-          <MessageSquare size={14} className="text-laip-cyan" /> AI Copilot
-        </h2>
-        <div className="bg-black/40 rounded-lg p-3 border border-white/5">
-          <div className="text-sm text-gray-400 italic mb-3">"What happens to the local grid if 10 EV chargers pull max power?"</div>
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Ask Copilot..."
-              className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-laip-cyan/50"
-            />
-          </div>
-        </div>
+        <button
+          onClick={() => setCopilotOpen(true)}
+          className="w-full flex items-center justify-between gap-3 bg-laip-cyan/10 hover:bg-laip-cyan/20 border border-laip-cyan/30 rounded-xl px-4 py-3 cursor-pointer transition-all group"
+        >
+          <span className="flex items-center gap-2 text-sm font-semibold text-white">
+            <MessageSquare size={16} className="text-laip-cyan" />
+            AI Copilot
+          </span>
+          <span className="text-[10px] uppercase tracking-widest text-laip-cyan/80 group-hover:text-laip-cyan">Open</span>
+        </button>
       </div>
+
+      <CopilotModal
+        open={copilotOpen}
+        onClose={() => setCopilotOpen(false)}
+        uiState={{
+          isNight,
+          isRain,
+          isEvSim,
+          isStreetlightsSim,
+          isStreetlightsAssetFilter,
+          rainIntensity,
+          cameraMode,
+          gridMW: simMetrics.gridMW,
+          evActivePercentage: simMetrics.activePercentage,
+        }}
+      />
     </div>
   );
 };
