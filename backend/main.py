@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from dotenv import load_dotenv
 import httpx
 import math
 import uvicorn
@@ -11,9 +13,11 @@ import sys
 
 # Ensure backend root is in system path for local imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 from database import get_db_connection, init_db
 from intelligence.inference.streetlight_predictor import predict_single_asset
+from intelligence.copilot import ask_copilot
 
 app = FastAPI(title="LAIP Live Data Backend")
 
@@ -191,19 +195,30 @@ async def get_city_data():
     out skel qt;
     """
 
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                "https://overpass-api.de/api/interpreter", 
-                content=query,
-                headers={"User-Agent": "LAIP-DigitalTwin/1.0", "Content-Type": "application/x-www-form-urlencoded"}
-            )
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as e:
-        print("Error fetching from Overpass:", e)
-        traceback.print_exc()
-        return {"error": "Failed to fetch map data"}
+    OVERPASS_URLS = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+    ]
+    
+    data = None
+    for url in OVERPASS_URLS:
+        try:
+            async with httpx.AsyncClient(timeout=90.0) as client:
+                resp = await client.post(
+                    url,
+                    content=query,
+                    headers={"User-Agent": "LAIP-DigitalTwin/1.0", "Content-Type": "application/x-www-form-urlencoded"}
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                break  # Success
+        except Exception as e:
+            print(f"Overpass mirror {url} failed: {e}")
+            continue
+    
+    if data is None:
+        print("All Overpass mirrors failed")
+        return {"error": "Failed to fetch map data from all mirrors"}
 
     nodes = {}
     buildings = []
@@ -527,6 +542,28 @@ async def run_streetlight_inference():
             
     STREETLIGHTS_INTEL_CACHE = results
     return {"status": "ok", "message": "Inference completed", "count": len(results)}
+
+
+class CopilotTurn(BaseModel):
+    role: str
+    content: str
+
+
+class CopilotRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000)
+    history: list[CopilotTurn] = []
+    ui_state: dict | None = None
+
+
+@app.post("/api/copilot")
+async def copilot_chat(req: CopilotRequest):
+    result = await ask_copilot(
+        message=req.message.strip(),
+        history=[turn.model_dump() for turn in req.history],
+        streetlights=STREETLIGHTS_INTEL_CACHE,
+        ui_state=req.ui_state,
+    )
+    return result
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)

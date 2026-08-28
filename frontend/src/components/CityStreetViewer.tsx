@@ -226,7 +226,7 @@ const TilesEnvironment = ({ isVisible, lat, lon, alt }: { isVisible: boolean, la
   return (
     <group matrix={inverseMatrix} matrixAutoUpdate={false} visible={isVisible}>
       <TilesErrorBoundary>
-        <TilesRenderer url="https://tile.googleapis.com/v1/3dtiles/root.json">
+        <TilesRenderer url="https://tile.googleapis.com/v1/3dtiles/root.json" errorTarget={20}>
           <TilesPlugin plugin={GoogleCloudAuthPlugin} args={authArgs} />
           <TilesPlugin plugin={GLTFExtensionsPlugin} args={gltfArgs} />
         </TilesRenderer>
@@ -1491,7 +1491,8 @@ const StreetlightsLayer = ({
   streetlightData,
   selectedStreetlightIndex,
   onStreetlightClick,
-  onFlyTo
+  onFlyTo,
+  onPointsReady
 }: {
   roads: any[],
   isNight: boolean,
@@ -1499,7 +1500,8 @@ const StreetlightsLayer = ({
   streetlightData: any[],
   selectedStreetlightIndex: number | null,
   onStreetlightClick: (assetId: string, idx: number) => void,
-  onFlyTo?: (pt: THREE.Vector3) => void
+  onFlyTo?: (pt: THREE.Vector3) => void,
+  onPointsReady?: (pts: THREE.Vector3[]) => void
 }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const poleRef = useRef<THREE.InstancedMesh>(null);
@@ -1541,6 +1543,13 @@ const StreetlightsLayer = ({
     });
     return arr;
   }, [roads]);
+
+  // Notify parent of computed points for fly-to operations
+  useEffect(() => {
+    if (points.length > 0 && onPointsReady) {
+      onPointsReady(points);
+    }
+  }, [points]);
 
   useEffect(() => {
     if (meshRef.current && poleRef.current && points.length > 0) {
@@ -1634,33 +1643,65 @@ const StreetlightsLayer = ({
         glowRef.current.instanceMatrix.needsUpdate = true;
         if (glowRef.current.instanceColor) glowRef.current.instanceColor.needsUpdate = true;
       }
+
+      // Recompute bounding sphere to include all instance positions — critical for raycasting
+      meshRef.current.computeBoundingSphere();
     }
   }, [points, isNight, isStreetlightsSim, streetlightData]);
 
+  // Manual screen-space click fallback — ensures clicks always work even if R3F's internal
+  // interaction list loses track or if the 3D sphere is too tiny to hit via exact raycasting.
+  const { camera, pointer } = useThree();
+  
   useEffect(() => {
-    const handleFlyTo = (e: any) => {
-      const assetId = e.detail?.assetId;
-      if (assetId && points.length > 0 && onFlyTo) {
-        const slNum = parseInt(assetId.replace("SL-", ""), 10);
-        if (!isNaN(slNum)) {
-          const idx = slNum % points.length;
-          const pt = points[idx];
-          if (pt) {
-            onFlyTo(pt);
-            // Also trigger selection highlight for that light
-            onStreetlightClick(assetId, idx);
-          }
+    const handleClick = () => {
+      if (!meshRef.current || points.length === 0) return;
+      
+      let closestIdx = -1;
+      let minDistance = Infinity;
+      const threshold = 0.015; // ~0.75% of screen width/height, much more precise
+      
+      const tempVector = new THREE.Vector3();
+      
+      for (let i = 0; i < points.length; i++) {
+        // Get the world position of the streetlight bulb
+        tempVector.copy(points[i]);
+        tempVector.y += 5; // Bulb is at y=5 relative to point
+        
+        // Project to screen space (NDC: -1 to +1)
+        tempVector.project(camera);
+        
+        // If it's behind the camera, skip
+        if (tempVector.z > 1 || tempVector.z < -1) continue;
+        
+        // Calculate 2D distance to mouse pointer
+        const dx = tempVector.x - pointer.x;
+        const dy = tempVector.y - pointer.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist < threshold && dist < minDistance) {
+          minDistance = dist;
+          closestIdx = i;
         }
       }
+      
+      if (closestIdx !== -1) {
+        const assetId = `SL-${closestIdx % 100}`;
+        onStreetlightClick(assetId, closestIdx);
+      }
     };
-    window.addEventListener("laip-streetlight-flyto", handleFlyTo);
-    return () => window.removeEventListener("laip-streetlight-flyto", handleFlyTo);
-  }, [points, onFlyTo, onStreetlightClick]);
+    
+    window.addEventListener('laip-streetlight-manual-click', handleClick);
+    return () => window.removeEventListener('laip-streetlight-manual-click', handleClick);
+  }, [points, camera, pointer, onStreetlightClick]);
+
+  // Fly-to is now handled by the parent CityStreetViewer component
+  // to avoid stale closure issues with inline callbacks
 
   if (points.length === 0) return null;
 
   return (
-    <group>
+    <group renderOrder={10}>
       {/* Selected streetlight indicator */}
       {selectedStreetlightIndex !== null && points[selectedStreetlightIndex] && (
         <group position={[points[selectedStreetlightIndex].x, 0.5, points[selectedStreetlightIndex].z]}>
@@ -1681,6 +1722,7 @@ const StreetlightsLayer = ({
       <instancedMesh
         ref={meshRef}
         args={[undefined as any, undefined as any, points.length]}
+        frustumCulled={false}
         onClick={(e) => {
           e.stopPropagation();
           const idx = e.instanceId;
@@ -1698,18 +1740,18 @@ const StreetlightsLayer = ({
           document.body.style.cursor = 'auto';
         }}
       >
-        <sphereGeometry args={[0.7, 8, 8]} />
-        <meshStandardMaterial toneMapped={false} emissive={new THREE.Color('#ffffff')} emissiveIntensity={0.2} />
+        <sphereGeometry args={[1.0, 8, 8]} />
+        <meshStandardMaterial toneMapped={false} emissive={new THREE.Color('#ffffff')} emissiveIntensity={0.2} depthTest={true} />
       </instancedMesh>
 
       {/* Glow Halos */}
-      <instancedMesh ref={glowRef} args={[undefined as any, undefined as any, points.length]}>
+      <instancedMesh ref={glowRef} args={[undefined as any, undefined as any, points.length]} frustumCulled={false}>
         <sphereGeometry args={[4, 8, 8]} />
         <meshStandardMaterial transparent opacity={0.15} depthWrite={false} blending={THREE.AdditiveBlending} />
       </instancedMesh>
 
       {/* Poles */}
-      <instancedMesh ref={poleRef} args={[undefined as any, undefined as any, points.length]}>
+      <instancedMesh ref={poleRef} args={[undefined as any, undefined as any, points.length]} frustumCulled={false}>
         <cylinderGeometry args={[0.15, 0.15, 5, 4]} />
         <meshStandardMaterial color="#475569" metalness={0.8} roughness={0.2} />
       </instancedMesh>
@@ -2443,6 +2485,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const [selectedStreetlight, setSelectedStreetlight] = useState<any>(null);
   const [selectedStreetlightIndex, setSelectedStreetlightIndex] = useState<number | null>(null);
   const [streetlightData, setStreetlightData] = useState<any[]>([]);
+  const streetlightPointsRef = useRef<THREE.Vector3[]>([]);
 
 
   const isLiveNight = weather ? !weather.is_day : false;
@@ -2463,6 +2506,40 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
     };
     window.addEventListener('laip-sidebar-collapse', handleSidebarCollapse);
     return () => window.removeEventListener('laip-sidebar-collapse', handleSidebarCollapse);
+  }, []);
+
+  // Streetlight fly-to handler — lives in parent to avoid stale closure issues
+  useEffect(() => {
+    const handleFlyTo = (e: any) => {
+      const assetId = e.detail?.assetId;
+      if (!assetId) return;
+
+      const points = streetlightPointsRef.current;
+      const slNum = parseInt(assetId.replace("SL-", ""), 10);
+      if (isNaN(slNum) || points.length === 0) return;
+
+      const idx = slNum % points.length;
+      const pt = points[idx];
+      if (!pt) return;
+
+      // Fly camera to the streetlight
+      setCameraTarget(new THREE.Vector3(pt.x, 25, pt.z));
+      // Set visual highlight
+      setSelectedStreetlightIndex(idx);
+
+      // Fetch and show the intelligence panel
+      fetch(`http://localhost:8001/api/streetlights/${assetId}`)
+        .then(r => r.json())
+        .then(data => {
+          if (!data.error) {
+            setSelectedStreetlight(data);
+          }
+        })
+        .catch(err => console.warn("Streetlight fetch failed:", err));
+    };
+
+    window.addEventListener("laip-streetlight-flyto", handleFlyTo);
+    return () => window.removeEventListener("laip-streetlight-flyto", handleFlyTo);
   }, []);
 
   const handleExportGLB = () => {
@@ -2514,6 +2591,8 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
     });
     setStationMetrics(metrics);
 
+    if (!isEvSim) return; // ONLY START INTERVAL IF SIM IS ACTIVE
+
     // Simulation Loop
     const interval = setInterval(() => {
       setStationMetrics(prev => {
@@ -2559,7 +2638,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [evStations]);
+  }, [evStations, isEvSim]);
 
   // Dispatch global EV metrics when station metrics change
   useEffect(() => {
@@ -2978,7 +3057,19 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
       )}
 
 
-      <Canvas onClick={() => { setExpandedLandmark(null); setExpandedGridNode(null); }} shadows camera={{ position: [0, 800, 1000], fov: 40, far: 500000 }} gl={{ logarithmicDepthBuffer: true }}>
+      <Canvas 
+        onPointerMissed={() => { 
+          setExpandedLandmark(null); 
+          setExpandedGridNode(null);
+          // Fallback: manually raycast streetlights ONLY when clicking empty space
+          // This prevents accidental clicks when panning the camera or clicking other assets.
+          requestAnimationFrame(() => {
+            window.dispatchEvent(new CustomEvent('laip-streetlight-manual-click'));
+          });
+        }} 
+        camera={{ position: [0, 800, 1000], fov: 40, near: 1, far: 50000 }}
+        gl={{ logarithmicDepthBuffer: true }}
+      >
         <color attach="background" args={[skyColor]} />
 
         <Sky
@@ -2997,14 +3088,6 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
           position={lightPos as [number, number, number]}
           intensity={dirIntensity}
           color={renderNight ? "#60a5fa" : "#fffaed"} // Cool moonlight or warm sunlight
-          castShadow
-          shadow-mapSize={[4096, 4096]}
-          shadow-camera-far={6000}
-          shadow-camera-left={-3000}
-          shadow-camera-right={3000}
-          shadow-camera-top={3000}
-          shadow-camera-bottom={-3000}
-          shadow-bias={-0.001}
         />
         {/* Soft fill light */}
         <directionalLight position={[-300, 200, 300]} intensity={renderNight ? 0.05 : 0.15} color="#ffffff" />
@@ -3051,6 +3134,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
                 onFlyTo={(pt) => {
                   setCameraTarget(new THREE.Vector3(pt.x, 25, pt.z));
                 }}
+                onPointsReady={(pts) => { streetlightPointsRef.current = pts; }}
               />
             )}
 
@@ -3137,7 +3221,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
           <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
           <Vignette eskil={false} offset={0.1} darkness={isDriveMode ? 1.2 : 1.0} />
           {(isDriveMode ? <DepthOfField focusDistance={0} focalLength={0.02} bokehScale={2} height={480} /> : null) as any}
-          <N8AO aoRadius={12} intensity={renderNight ? 1.0 : 1.5} color="#0f172a" />
+          {((isDriveMode || cameraMode === 'drone') ? <N8AO halfRes aoRadius={12} intensity={renderNight ? 1.0 : 1.5} color="#0f172a" /> : null) as any}
           <Bloom luminanceThreshold={isDriveMode ? 0.3 : (renderNight ? 0.4 : 1.5)} mipmapBlur intensity={isDriveMode ? 1.5 : (renderNight ? 1.0 : 0.05)} />
         </EffectComposer>
       </Canvas>
