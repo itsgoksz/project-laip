@@ -1,4 +1,4 @@
-import { ChevronRight, ChevronDown, ChevronLeft, Building2, Layers, Cpu, Wind, CloudRain, Moon, EvCharger, Eye, EyeOff, Zap, Radio, Network, Lightbulb } from 'lucide-react';
+import { ChevronRight, ChevronDown, ChevronLeft, Building2, Layers, Cpu, Wind, CloudRain, Moon, EvCharger, Eye, EyeOff, Zap, Radio, Network, Lightbulb, AlertTriangle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 const TreeNode = ({ label, icon: Icon, children, defaultExpanded = false }: any) => {
@@ -50,7 +50,25 @@ const CollapsibleSection = ({ title, children, defaultExpanded = true, action }:
   );
 };
 
-export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, isStreetlightsSim = false, assetCounts }: { isNight?: boolean, isRain?: boolean, isEvSim?: boolean, isStreetlightsSim?: boolean, assetCounts?: any }) => {
+export const Sidebar = ({
+  isNight = false,
+  isRain = false,
+  isEvSim = false,
+  isStreetlightsSim = false,
+  assetCounts,
+  selectedCity,
+  onSelectCity,
+  onTriggerTrafficSim
+}: {
+  isNight?: boolean,
+  isRain?: boolean,
+  isEvSim?: boolean,
+  isStreetlightsSim?: boolean,
+  assetCounts?: any,
+  selectedCity?: any,
+  onSelectCity?: (c: any) => void,
+  onTriggerTrafficSim?: () => void
+}) => {
   const [masterVisible, setMasterVisible] = useState(true);
   const [assetFilters, setAssetFilters] = useState({
     all: true,
@@ -59,7 +77,7 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, isSt
     hospital: false,
     evStations: false,
     roads: false,
-    traffic: true
+    traffic: false
   });
   const [assetCategoryFilters, setAssetCategoryFilters] = useState({
     buildings: false,
@@ -116,10 +134,22 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, isSt
   }, [isEvSim]);
 
   const [collapsed, setCollapsed] = useState(false);
+  const [isTrafficSimActive, setIsTrafficSimActive] = useState(false);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('laip-sidebar-collapse', { detail: { collapsed } }));
   }, [collapsed]);
+
+  useEffect(() => {
+    const handleActivate = () => setIsTrafficSimActive(true);
+    const handleDeactivate = () => setIsTrafficSimActive(false);
+    window.addEventListener('laip-start-traffic-sim', handleActivate);
+    window.addEventListener('laip-stop-traffic-sim', handleDeactivate);
+    return () => {
+      window.removeEventListener('laip-start-traffic-sim', handleActivate);
+      window.removeEventListener('laip-stop-traffic-sim', handleDeactivate);
+    };
+  }, []);
 
   if (collapsed) {
     return (
@@ -133,7 +163,7 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, isSt
         <div className="flex items-center justify-center text-gray-400 group-hover:text-white transition-colors pr-1">
           <ChevronRight size={16} />
         </div>
-        
+
         {/* Custom Tooltip */}
         <div className="absolute left-full ml-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/80 text-white text-xs px-3 py-1.5 rounded whitespace-nowrap border border-white/20 shadow-xl z-50">
           LAIP Management System
@@ -343,7 +373,7 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, isSt
                 }`}
             >
               <CloudRain size={16} className={`mr-3 ${isRain ? 'text-cyan-400' : 'text-cyan-400/60'}`} />
-              <span>Rain Simulation</span>
+              <span>Rain</span>
               {isRain && <span className="ml-auto text-[10px] font-bold text-cyan-400 uppercase tracking-wider">ON</span>}
             </button>
             <button
@@ -397,8 +427,21 @@ export const Sidebar = ({ isNight = false, isRain = false, isEvSim = false, isSt
                 }`}
             >
               <EvCharger size={16} className={`mr-3 ${isEvSim ? 'text-amber-400' : 'text-amber-400/60'}`} />
-              <span>EV Station Simulation</span>
+              <span>EV Stations</span>
               {isEvSim && <span className="ml-auto text-[10px] font-bold text-amber-400 uppercase tracking-wider">ON</span>}
+            </button>
+            <button
+              onClick={() => {
+                if (onTriggerTrafficSim) onTriggerTrafficSim();
+              }}
+              className={`w-full flex items-center p-2 rounded text-sm transition-all border cursor-pointer mt-1.5 ${isTrafficSimActive
+                  ? 'bg-red-500/20 border-red-500/50 text-red-300 shadow-[0_0_10px_rgba(239,68,68,0.3)] font-bold'
+                  : 'hover:bg-white/10 border-transparent text-gray-200'
+                }`}
+            >
+              <AlertTriangle size={16} className={`mr-3 ${isTrafficSimActive ? 'text-red-400' : 'text-red-400/60'}`} />
+              <span>Traffic Management</span>
+              {isTrafficSimActive && <span className="ml-auto text-[10px] font-bold text-red-400 uppercase tracking-wider">ON</span>}
             </button>
           </div>
         </CollapsibleSection>

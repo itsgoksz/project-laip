@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { SemanticAssetPanel } from './SemanticAssetPanel';
 import { StreetlightIntelligencePanel } from './StreetlightIntelligencePanel';
+import { TrafficIncidentSim } from './TrafficIncidentSim';
 
 import { OrbitControls, Environment, Html, Sky, FlyControls } from '@react-three/drei';
 import { EffectComposer, N8AO, Bloom, Vignette, ToneMapping, DepthOfField } from '@react-three/postprocessing';
@@ -2492,12 +2493,14 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const isLiveRain = weather ? weather.weather_code >= 61 : false;
   const [assetFilters, setAssetFilters] = useState<any>({ all: true });
   const [cameraTarget, setCameraTarget] = useState<THREE.Vector3 | null>(null);
+  const [mapMode, setMapMode] = useState<'SATELLITE' | 'ROADMAP' | 'HYBRID'>('HYBRID');
   const [focusedLandmark, setFocusedLandmark] = useState<any>(null);
   const [expandedLandmark, setExpandedLandmark] = useState<any>(null);
   const [selectedPhase, setSelectedPhase] = useState<any>(null);
   const [isDriveMode, setIsDriveMode] = useState(false);
   const [isCityTransparent, setIsCityTransparent] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isTrafficSimActive, setIsTrafficSimActive] = useState(false);
   const exportGroupRef = useRef<THREE.Group>(null);
 
   useEffect(() => {
@@ -2506,6 +2509,29 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
     };
     window.addEventListener('laip-sidebar-collapse', handleSidebarCollapse);
     return () => window.removeEventListener('laip-sidebar-collapse', handleSidebarCollapse);
+  }, []);
+
+  useEffect(() => {
+    const handleSimActivate = () => {
+      setIsTrafficSimActive(true);
+    };
+    const handleSimDeactivate = () => {
+      setIsTrafficSimActive(false);
+    };
+    const handleFocusIncident = (e: any) => {
+      if (e.detail?.x !== undefined && e.detail?.z !== undefined) {
+        setCameraTarget(new THREE.Vector3(e.detail.x, 140, e.detail.z));
+      }
+    };
+
+    window.addEventListener('laip-start-traffic-sim', handleSimActivate);
+    window.addEventListener('laip-stop-traffic-sim', handleSimDeactivate);
+    window.addEventListener('laip-focus-incident', handleFocusIncident as EventListener);
+    return () => {
+      window.removeEventListener('laip-start-traffic-sim', handleSimActivate);
+      window.removeEventListener('laip-stop-traffic-sim', handleSimDeactivate);
+      window.removeEventListener('laip-focus-incident', handleFocusIncident as EventListener);
+    };
   }, []);
 
   // Streetlight fly-to handler — lives in parent to avoid stale closure issues
@@ -2770,7 +2796,8 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const telemetryRef = useRef({ x: 0, z: 0, heading: 0, street: "" });
 
   useEffect(() => {
-    fetch("http://localhost:8001/api/city-data")
+    setLoading(true);
+    fetch(`http://localhost:8001/api/city-data?lat=${tilesLat}&lon=${tilesLon}`)
       .then(r => r.json())
       .then(data => {
         if (!data.error) setCityData(data);
@@ -2800,7 +2827,17 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
         }
       })
       .catch(e => console.error(e));
-  }, []);
+  }, [tilesLat, tilesLon]);
+
+  useEffect(() => {
+    if (cityCenter?.id === 'san-francisco') {
+      setCameraTarget(new THREE.Vector3(0, 80, 100));
+      setMapMode('HYBRID'); // Always show roads overlay for SF
+    } else {
+      setCameraTarget(new THREE.Vector3(0, 0, 0));
+      setMapMode('SATELLITE'); // Other cities: photorealistic only
+    }
+  }, [cityCenter]);
 
   // Compute and dispatch asset counts when data loads
   useEffect(() => {
@@ -2874,6 +2911,25 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
             <div className="bg-blue-500/10 text-blue-700 text-xs px-3 py-1.5 rounded-full border border-blue-500/30 backdrop-blur-md inline-flex items-center gap-2 mt-2">
               <span className="w-2 h-2 rounded-full bg-blue-500 animate-ping"></span>
               Syncing Massive OSM Drone Data (May take 10s)...
+            </div>
+          )}
+
+          {/* Map Mode toggle — San Francisco only */}
+          {cityCenter?.id === 'san-francisco' && !isDriveMode && (
+            <div className="mt-2 pointer-events-auto inline-flex items-center gap-0.5 bg-black/60 backdrop-blur border border-white/10 rounded-xl p-1 shadow-xl">
+              {(['SATELLITE', 'HYBRID', 'ROADMAP'] as const).map(mode => (
+                <button
+                  key={mode}
+                  onClick={() => setMapMode(mode)}
+                  className={`text-[10px] font-bold px-3 py-1 rounded-lg tracking-wider transition-all duration-200 ${
+                    mapMode === mode
+                      ? 'bg-cyan-500 text-black shadow-[0_0_8px_rgba(0,210,255,0.6)]'
+                      : 'text-white/50 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
             </div>
           )}
 
@@ -3094,7 +3150,10 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
 
         <group position={[0, -2, 0]}>
           <group position={[0, 32, 0]}>
-            <TilesEnvironment isVisible={cityOpacity >= 1.0 && !anyCategorySelected} lat={tilesLat} lon={tilesLon} alt={tilesAlt} />
+            <TilesEnvironment
+              isVisible={(cityOpacity >= 1.0 && !anyCategorySelected) && (mapMode === 'SATELLITE' || mapMode === 'HYBRID')}
+              lat={tilesLat} lon={tilesLon} alt={tilesAlt}
+            />
           </group>
 
           {/* Group for Unity Export */}
@@ -3191,8 +3250,17 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
             />
           )}
 
-          {/* Dynamic Traffic Engine — JP Nagar only (hide if driving to avoid collision glitches) */}
-          {isHomeCity && !isDriveMode && cityData?.roads && (assetFilters?.traffic !== false) && <TrafficEngine roads={cityData.roads} />}
+          {/* Dynamic Traffic Engine — JP Nagar only (hide if driving to avoid collision glitches; filter incident road if sim active) */}
+          {isHomeCity && !isDriveMode && cityData?.roads && (assetFilters?.traffic !== false) && (
+            <TrafficEngine
+              roads={isTrafficSimActive ? cityData.roads.filter((r: any) => r.id !== 92194637) : cityData.roads}
+            />
+          )}
+
+          {/* Traffic Incident Simulation Layer — JP Nagar (home city) when activated via sidebar */}
+          {isHomeCity && cityData?.roads && isTrafficSimActive && (
+            <TrafficIncidentSim roads={cityData.roads} cityData={cityData} />
+          )}
 
           {/* Dynamic Flight Engine */}
           {isShowFlights && <FlightEngine />}
@@ -3205,7 +3273,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
               maxPolarAngle={Math.PI / 2.1}
               minPolarAngle={Math.PI / 8}
               minDistance={100}
-              maxDistance={25000}
+              maxDistance={cityCenter?.id === 'san-francisco' ? 1500 : 25000}
               target={[0, 0, 0]}
             />
           )}

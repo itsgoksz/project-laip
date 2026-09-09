@@ -177,8 +177,57 @@ const EV_KW_PER_STATION = 50; // DC fast charger kW
 const EV_ACTIVE_RATE = 0.82; // 82% utilization
 const EV_ACTIVE_KW = +(TOTAL_EV_STATIONS * EV_KW_PER_STATION * EV_ACTIVE_RATE).toFixed(0);
 
-export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStreetlightsAssetFilter, rainIntensity, cameraMode }: any) => {
+export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStreetlightsAssetFilter, rainIntensity, cameraMode, selectedCity }: any) => {
   const [transparency, setTransparency] = useState(50);
+  const [trafficSimState, setTrafficSimState] = useState<string>('NORMAL');
+  const [trafficIncident, setTrafficIncident] = useState<any>(null);
+  const [trafficHistory, setTrafficHistory] = useState<any[]>([]);
+
+  useEffect(() => {
+    const handleTrafficSimState = (e: any) => {
+      if (e.detail) {
+        setTrafficSimState(e.detail.simState);
+        setTrafficIncident(e.detail.incident);
+        setTrafficHistory(e.detail.history || []);
+      }
+    };
+    window.addEventListener('laip-traffic-sim-state', handleTrafficSimState);
+    return () => window.removeEventListener('laip-traffic-sim-state', handleTrafficSimState);
+  }, []);
+
+  const handleStartIncident = () => {
+    window.dispatchEvent(new CustomEvent('laip-start-incident'));
+  };
+
+  const [isTrafficSimMode, setIsTrafficSimMode] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+
+  useEffect(() => {
+    const handleActivate = () => setIsTrafficSimMode(true);
+    const handleDeactivate = () => {
+      setIsTrafficSimMode(false);
+      setIsPaused(false);
+      setTrafficSimState('NORMAL');
+      setTrafficIncident(null);
+    };
+    window.addEventListener('laip-start-traffic-sim', handleActivate);
+    window.addEventListener('laip-stop-traffic-sim', handleDeactivate);
+    return () => {
+      window.removeEventListener('laip-start-traffic-sim', handleActivate);
+      window.removeEventListener('laip-stop-traffic-sim', handleDeactivate);
+    };
+  }, []);
+
+  const handleStopSim = () => {
+    window.dispatchEvent(new CustomEvent('laip-stop-incident'));
+    setIsPaused(false);
+  };
+
+  const handlePauseSim = () => {
+    const next = !isPaused;
+    setIsPaused(next);
+    window.dispatchEvent(new CustomEvent('laip-pause-incident', { detail: { paused: next } }));
+  };
   const [pressedKeys, setPressedKeys] = useState<Record<string, boolean>>({});
   const [simMetrics, setSimMetrics] = useState({ gridMW: TOTAL_GRID_MW, activePercentage: EV_ACTIVE_RATE * 100 });
   const [streetlightData, setStreetlightData] = useState<any[]>([]);
@@ -344,7 +393,7 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
 
         {/* Telemetry Section */}
         <section>
-          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
             <Activity size={14} className="text-laip-orange" /> Live Telemetry
             <button
               onClick={() => setCollapsed(true)}
@@ -355,8 +404,222 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
             </button>
           </h2>
 
+          {/* ── Simulation Controls ─────────────────────────────────────── */}
+          {isTrafficSimMode && (
+            <div className="mb-4 flex items-center gap-2">
+              {trafficSimState === 'NORMAL' ? (
+                /* Start button */
+                <button
+                  id="btn-start-incident"
+                  onClick={handleStartIncident}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-wider bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-500/40 shadow-[0_0_12px_rgba(239,68,68,0.2)] transition-all cursor-pointer"
+                >
+                  <AlertTriangle size={13} />
+                  Start Incident
+                </button>
+              ) : (
+                /* Pause + Stop + Spinner */
+                <div className="flex-1 flex items-center gap-3 mx-1">
+                  {/* Spinning ring around pause button */}
+                  <div className="relative flex items-center justify-center">
+                    {/* Outer spinner ring */}
+                    {!isPaused && (
+                      <svg className="absolute w-11 h-11 animate-spin" viewBox="0 0 44 44" fill="none">
+                        <circle cx="22" cy="22" r="20" stroke="url(#simGrad)" strokeWidth="2.5" strokeLinecap="round"
+                          strokeDasharray="80 50" />
+                        <defs>
+                          <linearGradient id="simGrad" x1="0" y1="0" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+                            <stop stopColor="#f97316" />
+                            <stop offset="1" stopColor="#ef4444" stopOpacity="0.1" />
+                          </linearGradient>
+                        </defs>
+                      </svg>
+                    )}
+                    <button
+                      onClick={handlePauseSim}
+                      title={isPaused ? 'Resume simulation' : 'Pause simulation'}
+                      className={`relative z-10 w-9 h-9 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
+                        isPaused
+                          ? 'bg-yellow-500/20 border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/30'
+                          : 'bg-orange-500/20 border-orange-500/50 text-orange-400 hover:bg-orange-500/30'
+                      }`}
+                    >
+                      {isPaused
+                        ? <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        : <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                      }
+                    </button>
+                  </div>
+
+                  <div className="flex-1 text-[10px]">
+                    <div className="text-white font-semibold">{isPaused ? 'Paused' : 'Simulation Running'}</div>
+                    <div className="text-gray-500 mt-0.5">{trafficSimState.replace(/_/g,' ').toLowerCase()}</div>
+                  </div>
+
+                  {/* Stop button */}
+                  <button
+                    onClick={handleStopSim}
+                    title="Stop & reset simulation"
+                    className="w-9 h-9 rounded-full flex items-center justify-center bg-white/5 border border-white/15 text-gray-400 hover:bg-red-900/40 hover:text-red-400 hover:border-red-500/40 transition-all cursor-pointer"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="space-y-3">
-            {isStreetlightsActive ? (
+            {isTrafficSimMode ? (
+              <>
+                {/* Traffic Sim Live Telemetry Card */}
+                <div className="bg-red-500/5 border border-red-500/10 rounded-lg p-3">
+                  <div className="text-xs text-gray-400 mb-2 flex justify-between items-center">
+                    <span className="flex items-center gap-1.5"><Activity size={12} className="text-red-400" /> JP Nagar Traffic Flow</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
+                      trafficSimState === 'NORMAL' ? 'bg-green-500/25 text-green-400' :
+                      trafficSimState === 'CONGESTION_BUILDUP' ? 'bg-orange-500/25 text-orange-400 animate-pulse' :
+                      trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' ? 'bg-blue-500/25 text-blue-400' :
+                      'bg-yellow-500/25 text-yellow-400'
+                    }`}>
+                      {trafficSimState === 'NORMAL' ? 'Nominal' :
+                       trafficSimState === 'CONGESTION_BUILDUP' ? 'Congestion Buildup' :
+                       trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' ? 'Rerouting Active' :
+                       trafficSimState === 'RECOVERY' ? 'Recovery' : 'Resolved'}
+                    </span>
+                  </div>
+
+                  {/* Grid stats */}
+                  <div className="grid grid-cols-2 gap-2 text-center mb-2.5">
+                    <div className="bg-black/35 border border-white/5 p-2 rounded">
+                      <div className="text-[9px] text-gray-500 uppercase font-semibold">Congestion Rate</div>
+                      <div className={`text-xl font-bold font-mono mt-0.5 ${
+                        (trafficIncident?.congestionLevel || 12) >= 70 ? 'text-red-400' :
+                        (trafficIncident?.congestionLevel || 12) >= 40 ? 'text-orange-400' : 'text-green-400'
+                      }`}>
+                        {trafficIncident ? Math.round(trafficIncident.congestionLevel) : 12}%
+                      </div>
+                    </div>
+                    <div className="bg-black/35 border border-white/5 p-2 rounded">
+                      <div className="text-[9px] text-gray-500 uppercase font-semibold">Average Speed</div>
+                      <div className="text-xl font-bold font-mono text-white mt-0.5">
+                        {trafficIncident ? Math.round(trafficIncident.averageSpeed) : 45} <span className="text-[10px] text-gray-400">km/h</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Congestion progress bar */}
+                  <div className="w-full bg-white/10 rounded-full h-1.5 mb-2.5 overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-500 ${
+                        (trafficIncident?.congestionLevel || 12) >= 70 ? 'bg-red-500' :
+                        (trafficIncident?.congestionLevel || 12) >= 40 ? 'bg-orange-500' : 'bg-green-500'
+                      }`}
+                      style={{ width: `${trafficIncident ? trafficIncident.congestionLevel : 12}%` }}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5 text-[10px] text-gray-400 border-t border-white/5 pt-2">
+                    <div className="flex justify-between">
+                      <span>Simulated Area</span>
+                      <span className="text-white font-semibold">JP Nagar, Bengaluru</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total Tracked Roads</span>
+                      <span className="text-white font-semibold">{trafficSimState === 'NORMAL' ? 'Monitoring' : 'Live'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Active Flow Vehicles</span>
+                      <span className="text-laip-cyan font-semibold">{trafficSimState === 'NORMAL' ? '200' : '200'} units</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Active Incident Details Card */}
+                {trafficIncident && trafficSimState !== 'NORMAL' && (
+                  <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3">
+                    <div className="text-xs font-semibold text-orange-400 mb-2 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5"><AlertTriangle size={12} /> Active Alert: {trafficIncident.type}</span>
+                      <span className="text-[9px] text-gray-500">{trafficIncident.timestamp}</span>
+                    </div>
+                    
+                    <div className="space-y-1 text-[10px] text-gray-300">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Location:</span>
+                        <span className="font-semibold text-white truncate max-w-[150px]">{trafficIncident.roadName}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Severity:</span>
+                        <span className="text-red-400 font-semibold">{trafficIncident.severity}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Lanes Blocked:</span>
+                        <span className="text-white">{trafficIncident.lanesAffected}</span>
+                      </div>
+                      <div className="flex justify-between border-t border-white/5 pt-1.5 mt-1.5">
+                        <span className="text-gray-500">Routing Mode:</span>
+                        <span className={`font-semibold ${trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {trafficSimState === 'CONGESTION_BUILDUP' && 'Recalculating network...'}
+                          {trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' && 'AI Rerouting Active (Bypass Street)'}
+                          {trafficSimState === 'RECOVERY' && 'Clearing Blockage'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' && (
+                      <div className="mt-2.5 p-2 bg-blue-500/10 border border-blue-500/30 rounded text-[9px] text-blue-300 leading-relaxed">
+                        <span className="font-bold text-white">✦ Dual AI Bypass Active:</span>
+                        <div className="mt-1 space-y-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />
+                            <span><strong className="text-cyan-300">Primary Bypass:</strong> Left turn before breakdown via North Corridor</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+                            <span><strong className="text-orange-300">Early Diversion:</strong> Upstream orange route active to prevent junction choke</span>
+                          </div>
+                          <div className="text-[8px] text-gray-400 pt-0.5 border-t border-white/5">
+                            Strict bottleneck control: 0 vehicles pass breakdown area until recovery
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Resolved Incident History Collapsible List */}
+                <div className="bg-white/5 border border-white/10 rounded-lg p-3 flex flex-col min-h-[120px]">
+                  <div className="text-xs font-semibold text-gray-400 mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-gray-300"><CheckCircle2 size={12} /> Incident History</span>
+                    <span className="text-[9px] text-gray-500">{trafficHistory.length} resolved</span>
+                  </div>
+
+                  {trafficHistory.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-center p-3 bg-black/20 rounded border border-white/5">
+                      <CheckCircle2 size={18} className="text-gray-600 mb-1" />
+                      <div className="text-[10px] text-gray-400 font-medium">No Incidents Resolved Yet</div>
+                      <div className="text-[8px] text-gray-600 mt-0.5">Start an incident to run scenario</div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-[160px] overflow-y-auto custom-scrollbar pr-1 flex-1">
+                      {trafficHistory.map((hist, idx) => (
+                        <div key={idx} className="p-1.5 bg-black/40 border border-white/5 rounded text-[9px] text-gray-400 flex flex-col">
+                          <div className="flex justify-between font-bold text-white mb-0.5">
+                            <span>{hist.type}</span>
+                            <span className="text-green-400">RESOLVED</span>
+                          </div>
+                          <div>Road: {hist.roadName}</div>
+                          <div className="flex justify-between text-gray-500 mt-0.5">
+                            <span>Duration: {hist.duration}s</span>
+                            <span>Max Cong: {hist.maxCongestion}%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : isStreetlightsActive ? (
               <>
                 {/* Overall Summary Card */}
                 <div className="bg-laip-cyan/5 border border-laip-cyan/20 rounded-lg p-3">
@@ -559,7 +822,16 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
           </h2>
 
           <div className="space-y-3">
-            {isStreetlightsActive && (
+            {isTrafficSimMode && (
+              <div className="bg-white/5 border border-white/10 rounded-lg p-3 text-xs text-gray-400">
+                <span className="font-semibold text-white">Simulation: Traffic Incident Response</span>
+                <p className="mt-1 text-[10px] text-gray-500 leading-relaxed">
+                  Traffic Incident simulation is active in San Francisco. Click the alert marker in the 3D viewport to inspect detailed diagnostics and view real-time re-routing.
+                </p>
+              </div>
+            )}
+
+            {!isTrafficSimMode && isStreetlightsActive && (
               <div className="bg-white/5 border border-white/10 rounded-lg p-3 text-xs text-gray-400">
                 <span className="font-semibold text-white">Simulation: Streetlights</span>
                 <p className="mt-1 text-[10px] text-gray-500 leading-relaxed">

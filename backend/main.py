@@ -31,6 +31,7 @@ app.add_middleware(
 
 # Global cache to prevent spamming Overpass API
 CITY_DATA_CACHE = None
+CITY_DATA_CACHES = {}
 
 @app.get("/health")
 def health_check():
@@ -160,20 +161,24 @@ async def get_flights():
         return {"error": "Failed to fetch flights"}
 
 @app.get("/api/city-data")
-async def get_city_data():
-    global CITY_DATA_CACHE
-    if CITY_DATA_CACHE:
-        return CITY_DATA_CACHE
+async def get_city_data(lat: float = 12.905, lon: float = 77.590):
+    global CITY_DATA_CACHES
+    cache_key = f"{round(lat, 4)}_{round(lon, 4)}"
+    if cache_key in CITY_DATA_CACHES:
+        return CITY_DATA_CACHES[cache_key]
     
-    # JP Nagar bounding box expanded to ~10 sq km for massive drone view
-    lat_center = 12.905 # Shifted south to include Puttenahalli
-    lon_center = 77.59
+    # Use the requested coordinates as center
+    lat_center = lat
+    lon_center = lon
     
-    # 3km x 3km Bounding Box (Highly safe for Overpass API limits)
-    lat_min = lat_center - 0.015
-    lat_max = lat_center + 0.015
-    lon_min = lon_center - 0.015
-    lon_max = lon_center + 0.015
+    # JP Nagar uses a larger box. San Francisco (around 37.793) or other cities use a smaller one.
+    is_sf = abs(lat - 37.7933) < 0.05
+    box_size = 0.006 if is_sf else 0.015
+    
+    lat_min = lat_center - box_size
+    lat_max = lat_center + box_size
+    lon_min = lon_center - box_size
+    lon_max = lon_center + box_size
 
     # Overpass Query
     query = f"""
@@ -360,13 +365,14 @@ async def get_city_data():
                 trees.append([pt[0] + (random.random()-0.5)*10, pt[1] + (random.random()-0.5)*10])
     
     print(f"Parsed {len(buildings)} buildings, {len(roads)} roads, {len(trees)} trees, and {len(lakes)} lakes.")
-    CITY_DATA_CACHE = {
+    city_data = {
         "buildings": buildings, 
         "roads": roads, 
         "trees": trees,
         "lakes": lakes
     }
-    return CITY_DATA_CACHE
+    CITY_DATA_CACHES[cache_key] = city_data
+    return city_data
 
 TOMTOM_API_KEY = "reitkjbaLdcjS6lc9nT8Q0J1uhnINnal"
 TRAFFIC_POINTS = [

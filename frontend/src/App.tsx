@@ -30,6 +30,39 @@ function App() {
   const [cityDropdownOpen, setCityDropdownOpen] = useState(false);
   const cityDropdownRef = useRef<HTMLDivElement>(null);
 
+  const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState<string[]>([]);
+
+  const [isTrafficSimActive, setIsTrafficSimActive] = useState(false);
+
+  const triggerTrafficIncidentSim = () => {
+    if (isTrafficSimActive) {
+      // TOGGLE OFF
+      setIsTrafficSimActive(false);
+      window.dispatchEvent(new CustomEvent('laip-stop-traffic-sim'));
+      window.dispatchEvent(new CustomEvent('laip-stop-incident'));
+      return;
+    }
+
+    // TOGGLE ON
+    setShowLoadingOverlay(true);
+    setLoadingProgress(["Analyzing road network..."]);
+
+    setTimeout(() => {
+      setLoadingProgress(prev => [...prev, "Scanning traffic flow sensors..."]);
+    }, 600);
+
+    setTimeout(() => {
+      setLoadingProgress(prev => [...prev, "Initializing incident simulation engine..."]);
+    }, 1200);
+
+    setTimeout(() => {
+      setShowLoadingOverlay(false);
+      setIsTrafficSimActive(true);
+      window.dispatchEvent(new CustomEvent('laip-start-traffic-sim'));
+    }, 1800);
+  };
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (cityDropdownRef.current && !cityDropdownRef.current.contains(e.target as Node)) {
@@ -80,7 +113,7 @@ function App() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-laip-bg text-white font-sans selection:bg-laip-cyan selection:text-black">
-      
+
       {/* 3D Scene — Full Bleed Background */}
       <div className="absolute inset-0 z-0 pointer-events-auto">
         {activeView === 'zeon' ? <SceneViewer /> : <CityStreetViewer isShowFlights={isShowFlights} rainIntensity={rainIntensity} cameraMode={cameraMode} cityCenter={selectedCity} />}
@@ -91,13 +124,13 @@ function App() {
         <div className="flex items-center gap-6">
           {/* View Tabs */}
           <div className="flex items-center bg-black/20 rounded-full border border-white/5 p-1">
-            <button 
+            <button
               onClick={() => setActiveView('zeon')}
               className={`px-5 py-1.5 rounded-full text-xs tracking-wider transition-all ${activeView === 'zeon' ? 'bg-laip-cyan/20 text-laip-cyan font-bold shadow-[0_0_10px_rgba(0,240,255,0.2)]' : 'text-gray-400 hover:text-white'}`}
             >
               ZEON HUB
             </button>
-            <button 
+            <button
               onClick={() => setActiveView('city')}
               className={`px-5 py-1.5 rounded-full text-xs tracking-wider transition-all ${activeView === 'city' ? 'bg-laip-cyan/20 text-laip-cyan font-bold shadow-[0_0_10px_rgba(0,240,255,0.2)]' : 'text-gray-400 hover:text-white'}`}
             >
@@ -106,14 +139,14 @@ function App() {
           </div>
 
           {activeView === 'city' && (
-          <button
-            onClick={() => setIsShowFlights(prev => !prev)}
-            title="used by OpenSky API"
-            className={`flex items-center gap-1.5 border border-white/10 text-xs px-3 py-1.5 rounded-full transition-colors cursor-pointer ${isShowFlights ? 'bg-black/30 text-white' : 'bg-transparent text-gray-400'}`}
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${isShowFlights ? 'bg-blue-400 animate-pulse' : 'bg-gray-500'}`}></span>
-            <span className={`font-medium ${isShowFlights ? 'text-blue-300' : ''}`}>Show Flights</span>
-          </button>
+            <button
+              onClick={() => setIsShowFlights(prev => !prev)}
+              title="used by OpenSky API"
+              className={`flex items-center gap-1.5 border border-white/10 text-xs px-3 py-1.5 rounded-full transition-colors cursor-pointer ${isShowFlights ? 'bg-black/30 text-white' : 'bg-transparent text-gray-400'}`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${isShowFlights ? 'bg-blue-400 animate-pulse' : 'bg-gray-500'}`}></span>
+              <span className={`font-medium ${isShowFlights ? 'text-blue-300' : ''}`}>Show Flights</span>
+            </button>
           )}
           <button
             onClick={() => setCameraMode(prev => prev === 'map' ? 'drone' : 'map')}
@@ -130,7 +163,7 @@ function App() {
                 <span className="text-gray-400 text-[10px] uppercase tracking-wider font-medium">Temp</span>
                 <span className="font-semibold text-white">{weather.temperature}°C</span>
               </div>
-              <div 
+              <div
                 className="flex items-center gap-1.5 bg-black/20 border border-white/5 text-white text-xs px-3 py-1.5 rounded-full cursor-help"
                 title={`Live Condition Code: ${weather.weather_code}`}
               >
@@ -171,11 +204,10 @@ function App() {
                   <button
                     key={city.id}
                     onClick={() => { setSelectedCity(city); setCityDropdownOpen(false); }}
-                    className={`w-full flex items-center gap-2.5 px-4 py-3 text-xs transition-colors ${
-                      selectedCity.id === city.id
+                    className={`w-full flex items-center gap-2.5 px-4 py-3 text-xs transition-colors ${selectedCity.id === city.id
                         ? 'bg-laip-cyan/15 text-laip-cyan'
                         : 'text-gray-300 hover:bg-white/10 hover:text-white'
-                    }`}
+                      }`}
                   >
                     <MapPin size={12} className={selectedCity.id === city.id ? 'text-laip-cyan' : 'text-gray-500'} />
                     <span className="font-medium">{city.label}</span>
@@ -192,20 +224,30 @@ function App() {
 
       {/* Floating Left Sidebar */}
       <div className="absolute left-6 top-24 bottom-6 w-[280px] z-40 pointer-events-none">
-        <Sidebar isNight={isSimNight} isRain={isSimRain} isEvSim={isEvSim} isStreetlightsSim={isStreetlightsSim} assetCounts={assetCounts} />
+        <Sidebar
+          isNight={isSimNight}
+          isRain={isSimRain}
+          isEvSim={isEvSim}
+          isStreetlightsSim={isStreetlightsSim}
+          assetCounts={assetCounts}
+          selectedCity={selectedCity}
+          onSelectCity={setSelectedCity}
+          onTriggerTrafficSim={triggerTrafficIncidentSim}
+        />
 
       </div>
 
       {/* Floating Right Panel */}
       <div className="absolute right-6 top-24 bottom-6 w-[320px] z-40 pointer-events-none flex flex-col items-end">
-        <RightPanel 
-          isNight={isSimNight} 
-          isRain={isSimRain} 
-          isEvSim={isEvSim} 
+        <RightPanel
+          isNight={isSimNight}
+          isRain={isSimRain}
+          isEvSim={isEvSim}
           isStreetlightsSim={isStreetlightsSim}
           isStreetlightsAssetFilter={isStreetlightsAssetFilter}
-          rainIntensity={rainIntensity} 
-          cameraMode={cameraMode} 
+          rainIntensity={rainIntensity}
+          cameraMode={cameraMode}
+          selectedCity={selectedCity}
         />
       </div>
 
@@ -213,6 +255,23 @@ function App() {
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
         <BottomBar />
       </div>
+
+      {/* Dynamic Loading Overlay */}
+      {showLoadingOverlay && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 backdrop-blur-sm pointer-events-auto">
+          <div className="flex flex-col items-center">
+            {/* Loading Spinner */}
+            <div className="w-12 h-12 rounded-full border-[3px] border-white/15 border-t-white/80 animate-spin mb-7" />
+            {/* Current Loading Message */}
+           <div
+            key={loadingProgress.length}
+            className="text-sm text-white/75 tracking-wide loading-message"
+          >
+            {loadingProgress[loadingProgress.length - 1]}
+          </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
