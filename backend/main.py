@@ -284,7 +284,10 @@ async def get_city_data(lat: float = 12.905, lon: float = 77.590):
                 # Aggressive overrides for famous spots
                 if name:
                     lower_name = name.lower()
-                    if any(x in lower_name for x in ["brigade", "south city", "elita", "apartment", "residency", "enclave", "tower", "heights", "palmsprings"]):
+                    if "school" in lower_name:
+                        category = "school"
+                        height = 15
+                    elif any(x in lower_name for x in ["brigade", "south city", "elita", "apartment", "residency", "enclave", "tower", "heights", "palmsprings"]):
                         category = "apartments"
                         height = 40 + random.random() * 25 # 40-65m massive towers
                     if "woodrose" in lower_name:

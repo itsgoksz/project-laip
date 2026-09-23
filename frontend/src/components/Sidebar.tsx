@@ -75,6 +75,7 @@ export const Sidebar = ({
     apartments: false,
     restaurants: false,
     hospital: false,
+    schools: false,
     evStations: false,
     roads: false,
     traffic: false
@@ -107,7 +108,7 @@ export const Sidebar = ({
   const handleFilterChange = (key: keyof typeof assetFilters) => {
     setAssetFilters(prev => {
       if (key === 'all') {
-        return { all: true, apartments: false, restaurants: false, hospital: false, evStations: false, roads: false, traffic: true };
+        return { all: true, apartments: false, restaurants: false, hospital: false, schools: false, evStations: false, roads: false, traffic: true };
       } else {
         const next = { ...prev, [key]: !prev[key], all: false };
         const anyTrue = Object.entries(next).some(([k, v]) => k !== 'all' && v);
@@ -328,10 +329,11 @@ export const Sidebar = ({
         >
           <div className="space-y-2.5 text-sm text-gray-300 ml-2">
             {[
-              { id: 'all', label: 'All', count: assetCounts ? (assetCounts.apartments + assetCounts.restaurants + assetCounts.hospital + assetCounts.evStations + (assetCounts.roads || 0) + (assetCounts.traffic || 0)) : 0 },
+              { id: 'all', label: 'All', count: assetCounts ? (assetCounts.apartments + assetCounts.restaurants + assetCounts.hospital + (assetCounts.schools || 0) + assetCounts.evStations + (assetCounts.roads || 0) + (assetCounts.traffic || 0)) : 0 },
               { id: 'apartments', label: 'Apartments', count: assetCounts?.apartments || 0 },
               { id: 'restaurants', label: 'Restaurants', count: assetCounts?.restaurants || 0 },
               { id: 'hospital', label: 'Hospital', count: assetCounts?.hospital || 0 },
+              { id: 'schools', label: 'Schools', count: assetCounts?.schools || 0 },
               { id: 'evStations', label: 'EV Stations', count: assetCounts?.evStations || 0 },
               { id: 'roads', label: 'Road Networks', count: assetCounts?.roads || 0 },
               { id: 'traffic', label: 'Traffic Flow', count: assetCounts?.traffic || 0 }
@@ -415,6 +417,7 @@ export const Sidebar = ({
                     apartments: false,
                     restaurants: false,
                     hospital: false,
+                    schools: false,
                     evStations: true,
                     roads: false,
                     traffic: false

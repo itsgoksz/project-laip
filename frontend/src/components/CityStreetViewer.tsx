@@ -4,7 +4,7 @@ import { SemanticAssetPanel } from './SemanticAssetPanel';
 import { StreetlightIntelligencePanel } from './StreetlightIntelligencePanel';
 import { TrafficIncidentSim } from './TrafficIncidentSim';
 
-import { OrbitControls, Environment, Html, Sky, FlyControls } from '@react-three/drei';
+import { OrbitControls, Environment, Html, Sky, FlyControls, useGLTF } from '@react-three/drei';
 import { EffectComposer, N8AO, Bloom, Vignette, ToneMapping, DepthOfField } from '@react-three/postprocessing';
 import { ToneMappingMode } from 'postprocessing';
 import * as THREE from 'three';
@@ -15,7 +15,8 @@ import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
-import { Building2, Zap, Radio, ChevronsRight, ChevronsLeft, Download } from 'lucide-react';
+import schoolModelUrl from '../assets/LAIP_Fire_Safety_Compliance_Professional.glb';
+import { Building2, Zap, Radio, ChevronsRight, ChevronsLeft, Download, X } from 'lucide-react';
 import { ZeonHubModel } from './ZeonStation3D';
 import { RoadGraph } from '../utils/pathfinding';
 // ==========================================
@@ -334,7 +335,6 @@ const RealisticBuildingPalette = [
   "#e3d5ca", // light tan
   "#d5bdaf" // tan / pale terracotta
 ];
-
 const RealisticTreePalette = [
   "#2d5a27", // dark forest green
   "#3a5a25", // olive green
@@ -342,12 +342,14 @@ const RealisticTreePalette = [
   "#2b4522", // very dark green
 ];
 
-const MergedCityMap = ({ buildings }: { buildings: any[], isTransparent: boolean }) => {
+const MergedCityMap = ({ buildings, isTransparent, hiddenBuildingIds = [], onBuildingClick }: { buildings: any[], isTransparent: boolean, hiddenBuildingIds?: string[], onBuildingClick?: (b: any) => void }) => {
   const { buildingGeometry } = useMemo(() => {
     // 1. Merge Buildings
     const buildingGeos: THREE.BufferGeometry[] = [];
 
-    buildings.forEach(b => {
+    buildings.forEach((b, bIndex) => {
+      if (hiddenBuildingIds.includes(b.id)) return;
+
       try {
         const s = new THREE.Shape();
         let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
@@ -415,12 +417,15 @@ const MergedCityMap = ({ buildings }: { buildings: any[], isTransparent: boolean
           const rCount = roofGeo.attributes.position.count;
           const rCols = new Float32Array(rCount * 3);
           const rApt = new Float32Array(rCount);
+          const rBIdx = new Float32Array(rCount);
           for (let i = 0; i < rCount; i++) {
             rCols[i * 3] = 0.9; rCols[i * 3 + 1] = 0.2; rCols[i * 3 + 2] = 0.2; // Red roof
             rApt[i] = 0;
+            rBIdx[i] = bIndex;
           }
           roofGeo.setAttribute('color', new THREE.BufferAttribute(rCols, 3));
           roofGeo.setAttribute('isApartment', new THREE.BufferAttribute(rApt, 1));
+          roofGeo.setAttribute('buildingIndex', new THREE.BufferAttribute(rBIdx, 1));
           buildingGeos.push(roofGeo);
         }
 
@@ -431,12 +436,15 @@ const MergedCityMap = ({ buildings }: { buildings: any[], isTransparent: boolean
         const count = geo.attributes.position.count;
         const colors = new Float32Array(count * 3);
         const aptAttr = new Float32Array(count);
+        const bIdxAttr = new Float32Array(count);
         for (let i = 0; i < count; i++) {
           colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
           aptAttr[i] = isApt;
+          bIdxAttr[i] = bIndex;
         }
         geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
         geo.setAttribute('isApartment', new THREE.BufferAttribute(aptAttr, 1));
+        geo.setAttribute('buildingIndex', new THREE.BufferAttribute(bIdxAttr, 1));
 
         buildingGeos.push(geo);
       } catch (e) {
@@ -452,11 +460,27 @@ const MergedCityMap = ({ buildings }: { buildings: any[], isTransparent: boolean
     }
 
     return { buildingGeometry: mergedBuildingGeo };
-  }, [buildings]);
+  }, [buildings, hiddenBuildingIds]);
   return (
     <group>
       {buildingGeometry && (
-        <mesh castShadow={false} receiveShadow={false} geometry={buildingGeometry} material={buildingMaterial} />
+        <mesh
+          castShadow={false}
+          receiveShadow={false}
+          geometry={buildingGeometry}
+          material={buildingMaterial}
+          onClick={(e) => {
+            const geom = (e.object as any).geometry;
+            if (onBuildingClick && e.face && geom.attributes.buildingIndex) {
+              e.stopPropagation();
+              const idx = geom.attributes.buildingIndex.getX(e.face.a);
+              const b = buildings[idx];
+              if (b) {
+                onBuildingClick(b);
+              }
+            }
+          }}
+        />
       )}
     </group>
   );
@@ -478,9 +502,673 @@ dashedLaneMaterial.onBeforeCompile = (shader) => {
   );
   shader.fragmentShader = `varying vec2 vDashedUv;\n${shader.fragmentShader}`;
   shader.fragmentShader = shader.fragmentShader.replace(
-    '#include <color_fragment>',
-    `#include <color_fragment>
-     if (fract(vDashedUv.x * 20.0) > 0.5) discard;`
+    '#include <dithering_fragment>',
+    `#include <dithering_fragment>
+     if (fract(vDashedUv.y * 20.0) > 0.5) discard;`
+  );
+};
+
+const SchoolModel = ({ url, position, rotation = [0, 0, 0], scale = 1, visibleSafetyLayers, onAssetClick }: any) => {
+  const { scene } = useGLTF(url);
+  // Clone scene so it can be reused safely if needed
+  const clonedScene = useMemo(() => scene.clone(), [scene]);
+
+  useEffect(() => {
+    if (!visibleSafetyLayers) return;
+    clonedScene.traverse((child: any) => {
+      if (child.isMesh) {
+        // Toggle visibility based on layer toggles
+        if (child.name.includes('FireExtinguisher') || child.name.includes('ExtinguisherBody') || child.name.includes('ExtinguisherHandle')) {
+          child.visible = visibleSafetyLayers.includes('fire_extinguishers');
+        } else if (child.name.includes('Hydrant') || child.name.includes('Riser')) {
+          child.visible = visibleSafetyLayers.includes('hydrants');
+        } else if (child.name.includes('FireAlarm') || child.name.includes('AlarmWhiteFace')) {
+          child.visible = visibleSafetyLayers.includes('fire_alarms');
+        } else if (child.name.includes('SmokeDetector')) {
+          child.visible = visibleSafetyLayers.includes('smoke_detectors');
+        } else if (child.name.includes('EmergencyExit') || child.name.includes('ExitSign')) {
+          child.visible = visibleSafetyLayers.includes('emergency_exits');
+        }
+      }
+    });
+  }, [clonedScene, visibleSafetyLayers]);
+
+  const handlePointerDown = (e: any) => {
+    if (!onAssetClick) return;
+    const name = e.object.name;
+    const isSafetyAsset = name.includes('FireExtinguisher') || name.includes('Hydrant') || name.includes('FireAlarm') || name.includes('SmokeDetector') || name.includes('EmergencyExit') || name.includes('ExitSign');
+
+    if (isSafetyAsset) {
+      e.stopPropagation();
+      let type = 'Unknown';
+      let id = name;
+      let floor = 'Ground Floor';
+
+      if (name.includes('F2')) floor = 'Floor 2';
+      if (name.includes('F3')) floor = 'Floor 3';
+      if (name.includes('F4')) floor = 'Floor 4';
+      if (name.includes('F5')) floor = 'Floor 5';
+      if (name.includes('F6')) floor = 'Floor 6';
+
+      if (name.includes('FireExtinguisher') || name.includes('ExtinguisherBody')) type = 'Fire Extinguisher';
+      else if (name.includes('Hydrant')) type = 'Fire Hydrant';
+      else if (name.includes('FireAlarm')) type = 'Fire Alarm Call Point';
+      else if (name.includes('SmokeDetector')) type = 'Smoke Detector';
+      else if (name.includes('EmergencyExit') || name.includes('ExitSign')) type = 'Emergency Exit';
+
+      // Random deterministic status based on name
+      const rand = Math.abs(Math.sin(name.length * 42.5)) * 100;
+      let status = 'OK';
+      let inspection = 'Valid';
+      let nextDue = '2027-01-15';
+      if (rand > 90) {
+        status = 'Critical';
+        inspection = 'Failed';
+        nextDue = 'Immediate';
+      } else if (rand > 80) {
+        status = 'Warning';
+        inspection = 'Expiring Soon';
+        nextDue = '2026-10-01';
+      }
+
+      onAssetClick({
+        id,
+        type,
+        floor,
+        location: 'Zone A Corridor', // simplified
+        status,
+        lastInspection: '2026-06-15',
+        nextInspection: nextDue,
+        inspectionResult: inspection
+      });
+    }
+  };
+
+  return <primitive object={clonedScene} position={position} rotation={rotation} scale={scale} onPointerDown={handlePointerDown} />;
+};
+
+const XRayBuilding = ({ building, visibleSafetyLayers, onAssetClick }: { building: any, visibleSafetyLayers?: string[], onAssetClick?: (asset: any) => void }) => {
+  const isApartment = building.name?.toLowerCase().includes('cassia') || building.category === 'apartments' || building.name?.toLowerCase().includes('block');
+  const isSchool = building.name?.toLowerCase().includes('school') || building.category === 'school';
+
+  const { shellGeo, coldWaterGeo, hotWaterGeo, elecGeo, elevatorGeo, supportGeo, floorGeo, hvacGeo, fireGeo, sewerGeo, columnGeo, elevCabGeo, fireExitGeo, extinguisherGeo, smokeDetectorGeo, htmlMarkers, wallGeo, pathwayGeo, glassRailingGeo, innerWallGeo, hydrantGeo, fireAlarmGeo, hangingExitGeo } = useMemo(() => {
+    // ... rest of the code ...
+    if (!building) return { shellGeo: null, coldWaterGeo: null, hotWaterGeo: null, elecGeo: null, elevatorGeo: null, supportGeo: null, floorGeo: null, hvacGeo: null, fireGeo: null, sewerGeo: null, columnGeo: null, elevCabGeo: null, fireExitGeo: null, extinguisherGeo: null, smokeDetectorGeo: null, htmlMarkers: [], wallGeo: null, pathwayGeo: null, glassRailingGeo: null, innerWallGeo: null, hydrantGeo: null, fireAlarmGeo: null, hangingExitGeo: null };
+    const s = new THREE.Shape();
+
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    building.polygon.forEach((pt: number[], i: number) => {
+      if (i === 0) s.moveTo(pt[0], -pt[1]);
+      else s.lineTo(pt[0], -pt[1]);
+      minX = Math.min(minX, pt[0]);
+      maxX = Math.max(maxX, pt[0]);
+      minZ = Math.min(minZ, pt[1]);
+      maxZ = Math.max(maxZ, pt[1]);
+    });
+
+    const geo = new THREE.ExtrudeGeometry(s, { depth: building.height, bevelEnabled: false });
+    geo.rotateX(-Math.PI / 2);
+
+    const cwGeos: THREE.BufferGeometry[] = [];
+    const hwGeos: THREE.BufferGeometry[] = [];
+    const elecGeos: THREE.BufferGeometry[] = [];
+    const elevGeos: THREE.BufferGeometry[] = [];
+    const suppGeos: THREE.BufferGeometry[] = [];
+    const floorGeos: THREE.BufferGeometry[] = [];
+
+    const hvacGeos: THREE.BufferGeometry[] = [];
+    const fireGeos: THREE.BufferGeometry[] = [];
+    const sewerGeos: THREE.BufferGeometry[] = [];
+    const colGeos: THREE.BufferGeometry[] = [];
+    const elevCabGeos: THREE.BufferGeometry[] = [];
+
+    const fireExitGeos: THREE.BufferGeometry[] = [];
+    const extGeos: THREE.BufferGeometry[] = [];
+    const smokeGeos: THREE.BufferGeometry[] = [];
+    const wallGeos: THREE.BufferGeometry[] = [];
+    const pathwayGeos: THREE.BufferGeometry[] = [];
+
+    // New detailed elements
+    const glassRailingGeos: THREE.BufferGeometry[] = [];
+    const innerWallGeos: THREE.BufferGeometry[] = [];
+    const hydrantGeos: THREE.BufferGeometry[] = [];
+    const fireAlarmGeos: THREE.BufferGeometry[] = [];
+    const hangingExitGeos: THREE.BufferGeometry[] = [];
+
+    const htmlMarkers: { id: string, pos: [number, number, number], type: string, label: string }[] = [];
+
+    const cx = building.center[0];
+    const cz = building.center[1];
+    const bWidth = Math.max(2, maxX - minX);
+    const bDepth = Math.max(2, maxZ - minZ);
+
+    // Helper: Industrial Pipe with Flanges
+    const addPipe = (x: number, y: number, z: number, length: number, r: number, axis: 'x' | 'y' | 'z', arr: THREE.BufferGeometry[], withFlanges: boolean = true) => {
+      if (length <= 0) return;
+      const p = new THREE.CylinderGeometry(r, r, length, 8);
+      if (axis === 'x') p.rotateZ(Math.PI / 2);
+      else if (axis === 'z') p.rotateX(Math.PI / 2);
+      p.translate(x, y, z);
+      arr.push(p);
+
+      if (withFlanges && length > 0.4) {
+        const fR = r * 1.6;
+        const fT = 0.05;
+        const f1 = new THREE.CylinderGeometry(fR, fR, fT, 8);
+        const f2 = new THREE.CylinderGeometry(fR, fR, fT, 8);
+        if (axis === 'x') { f1.rotateZ(Math.PI / 2); f2.rotateZ(Math.PI / 2); f1.translate(x - length / 2, y, z); f2.translate(x + length / 2, y, z); }
+        else if (axis === 'z') { f1.rotateX(Math.PI / 2); f2.rotateX(Math.PI / 2); f1.translate(x, y, z - length / 2); f2.translate(x, y, z + length / 2); }
+        else { f1.translate(x, y - length / 2, z); f2.translate(x, y + length / 2, z); }
+        arr.push(f1, f2);
+      }
+    };
+
+    // Helper: Industrial Valve Handwheel
+    const addValve = (x: number, y: number, z: number, r: number, axis: 'x' | 'z', arr: THREE.BufferGeometry[]) => {
+      const stem = new THREE.CylinderGeometry(0.04, 0.04, 0.3, 8);
+      const wheel = new THREE.TorusGeometry(r * 2.5, 0.04, 8, 12);
+      wheel.rotateX(Math.PI / 2);
+      wheel.translate(0, 0.15, 0);
+      stem.translate(0, 0, 0);
+      const merged = BufferGeometryUtils.mergeGeometries([stem, wheel]);
+      if (axis === 'x') merged.rotateX(Math.PI / 2); else merged.rotateZ(Math.PI / 2);
+      merged.translate(x, y, z);
+      arr.push(merged);
+    };
+
+    // Helper: Structural Ceiling Support
+    const addSupport = (x: number, y: number, z: number, heightToCeiling: number) => {
+      const strut = new THREE.BoxGeometry(0.1, heightToCeiling, 0.1);
+      strut.translate(x, y + heightToCeiling / 2, z);
+      const bracket = new THREE.BoxGeometry(0.4, 0.05, 0.4);
+      bracket.translate(x, y, z);
+      suppGeos.push(strut, bracket);
+    };
+
+    // Helper: HVAC Duct
+    const addDuct = (x: number, y: number, z: number, length: number, w: number, h: number, axis: 'x' | 'z', arr: THREE.BufferGeometry[]) => {
+      if (length <= 0) return;
+      const d = new THREE.BoxGeometry(w, h, length);
+      if (axis === 'x') d.rotateY(Math.PI / 2);
+      d.translate(x, y, z);
+      arr.push(d);
+
+      // Duct seam (visual joint)
+      const seam = new THREE.BoxGeometry(w + 0.05, h + 0.05, 0.1);
+      if (axis === 'x') seam.rotateY(Math.PI / 2);
+      seam.translate(x, y, z);
+      arr.push(seam);
+    };
+
+    // Helper: Build connected walls along a set of points
+    const buildWallsAlongPoints = (points: THREE.Vector3[], height: number, thickness: number, yOffset: number, geoArray: THREE.BufferGeometry[]) => {
+      for (let i = 0; i < points.length; i++) {
+        const p1 = points[i];
+        const p2 = points[(i + 1) % points.length];
+        const dist = p1.distanceTo(p2);
+        if (dist < 0.1) continue;
+
+        const wall = new THREE.BoxGeometry(thickness, height, dist);
+        const mid = p1.clone().lerp(p2, 0.5);
+        const dummy = new THREE.Object3D();
+        dummy.position.set(mid.x, mid.y + yOffset + height / 2, mid.z);
+        dummy.lookAt(p2.x, dummy.position.y, p2.z);
+        dummy.updateMatrix();
+        wall.applyMatrix4(dummy.matrix);
+        geoArray.push(wall);
+      }
+    };
+
+    if (isSchool) {
+      const floorCount = 4;
+      const fHeight = building.height / floorCount;
+
+      // Structural Columns (Concrete Pillars) at the center
+      for (let ix of [-bWidth * 0.4, bWidth * 0.4]) {
+        for (let iz of [-bDepth * 0.4, bDepth * 0.4]) {
+          const col = new THREE.CylinderGeometry(0.35, 0.35, building.height, 8);
+          col.translate(cx + ix, building.height / 2, cz + iz);
+          colGeos.push(col);
+        }
+      }
+
+      for (let f = 1; f <= floorCount; f++) {
+        const y = f * fHeight;
+
+        // Solid Floor Grid (matches exact building footprint)
+        const grid = new THREE.ExtrudeGeometry(s, { depth: 0.2, bevelEnabled: false });
+        grid.rotateX(-Math.PI / 2);
+        grid.translate(0, y, 0);
+        floorGeos.push(grid);
+
+        // 1. Outer Glass Railing along the footprint
+        const outerPoints = building.polygon.map((pt: number[]) => new THREE.Vector3(pt[0], y, -pt[1]));
+        buildWallsAlongPoints(outerPoints, 1.2, 0.1, 0, glassRailingGeos);
+
+        // 2. Inner Solid Walls (creating a perimeter corridor)
+        const innerPoints = building.polygon.map((pt: number[]) => {
+          const px = pt[0], pz = -pt[1];
+          const dx = cx - px, dz = cz - pz;
+          const len = Math.sqrt(dx * dx + dz * dz) || 1;
+          const inset = 3.5; // Corridor width
+          return new THREE.Vector3(px + (dx / len) * inset, y, pz + (dz / len) * inset);
+        });
+        buildWallsAlongPoints(innerPoints, fHeight, 0.2, 0, innerWallGeos);
+
+        // Generate closed loop red pathway along the inner perimeter
+        if (innerPoints.length > 2) {
+          const pathCurve = new THREE.CatmullRomCurve3([...innerPoints, innerPoints[0]], true, 'catmullrom', 0.1);
+          const tubeGeo = new THREE.TubeGeometry(pathCurve, innerPoints.length * 4, 0.1, 4, true);
+          pathwayGeos.push(tubeGeo);
+        }
+
+        // Scatter Detailed Safety Equipment on the inner walls facing out to the corridor
+        for (let i = 0; i < innerPoints.length; i++) {
+          const p1 = innerPoints[i];
+          const p2 = innerPoints[(i + 1) % innerPoints.length];
+          const dist = p1.distanceTo(p2);
+          if (dist < 2.0) continue;
+
+          const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
+          const normal = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
+
+          // Flip normal if it points towards the center of the building
+          const centerVec = new THREE.Vector3(p1.x - cx, 0, p1.z - cz);
+          if (normal.dot(centerVec) < 0) {
+            normal.negate();
+          }
+
+          const mid = p1.clone().lerp(p2, 0.5);
+          const mountPt = mid.clone().add(normal.clone().multiplyScalar(0.15)); // Mount slightly off the wall
+
+          const dummy = new THREE.Object3D();
+
+          // 3D Fire Extinguisher (Red cylinder with nozzle, facing corridor)
+          if (i % 2 === 0) {
+            const extBody = new THREE.CylinderGeometry(0.12, 0.12, 0.5, 12);
+            const extTop = new THREE.SphereGeometry(0.12, 12, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+            extTop.translate(0, 0.25, 0);
+            const extNozzle = new THREE.BoxGeometry(0.06, 0.06, 0.2);
+            extNozzle.translate(0, 0.15, -0.15); // -Z is front
+            const extModel = BufferGeometryUtils.mergeGeometries([extBody, extTop, extNozzle]);
+
+            dummy.position.set(mountPt.x, y + 0.6, mountPt.z);
+            dummy.lookAt(mountPt.x + normal.x, dummy.position.y, mountPt.z + normal.z);
+            dummy.updateMatrix();
+            extModel.applyMatrix4(dummy.matrix);
+            extGeos.push(extModel);
+          }
+
+          // Fire Alarm (Small red box mounted higher)
+          const alarm = new THREE.BoxGeometry(0.2, 0.25, 0.05);
+          const alarmMount = mid.clone().add(dir.clone().multiplyScalar(0.5)).add(normal.clone().multiplyScalar(0.12));
+          dummy.position.set(alarmMount.x, y + 1.2, alarmMount.z);
+          dummy.lookAt(alarmMount.x + normal.x, dummy.position.y, alarmMount.z + normal.z);
+          dummy.updateMatrix();
+          alarm.applyMatrix4(dummy.matrix);
+          fireAlarmGeos.push(alarm);
+
+          // Hanging Emergency Exit Sign & Smoke Detector
+          if (i % 2 === 0) {
+            const corridorMid = mid.clone().add(normal.clone().multiplyScalar(1.75));
+            const sign = new THREE.BoxGeometry(0.8, 0.3, 0.05);
+            dummy.position.set(corridorMid.x, y + fHeight - 0.3, corridorMid.z);
+            dummy.lookAt(corridorMid.x + dir.x, dummy.position.y, corridorMid.z + dir.z);
+            dummy.updateMatrix();
+            sign.applyMatrix4(dummy.matrix);
+            hangingExitGeos.push(sign);
+
+            const smoke = new THREE.CylinderGeometry(0.15, 0.15, 0.05, 16);
+            smoke.translate(corridorMid.x, y + fHeight - 0.05, corridorMid.z);
+            smokeGeos.push(smoke);
+          }
+
+          // Fire Hydrant (Thick red pipe from floor to ceiling)
+          if (i % 3 === 0) {
+            const hMount = mid.clone().sub(dir.clone().multiplyScalar(1.0)).add(normal.clone().multiplyScalar(0.2));
+            const hPipe = new THREE.CylinderGeometry(0.1, 0.1, fHeight, 12);
+            hPipe.translate(hMount.x, y + fHeight / 2, hMount.z);
+            const hValve = new THREE.BoxGeometry(0.3, 0.4, 0.4);
+            hValve.translate(hMount.x, y + 0.6, hMount.z); // Valve box near the bottom
+            hydrantGeos.push(BufferGeometryUtils.mergeGeometries([hPipe, hValve]));
+          }
+        }
+      }
+    } else if (isApartment) {
+      const floorCount = 14;
+      const fHeight = building.height / floorCount;
+      const elevWidth = 1.5, elevDepth = 1.5;
+
+      // Structural Columns (Concrete Pillars)
+      for (let ix of [-2, 2]) {
+        for (let iz of [-2, 2]) {
+          const col = new THREE.CylinderGeometry(0.35, 0.35, building.height, 8);
+          col.translate(cx + ix * 4, building.height / 2, cz + iz * 4);
+          colGeos.push(col);
+        }
+      }
+
+      // Elevator Core & Cabs
+      for (let i = 0; i < 4; i++) {
+        const ex = cx + (i % 2 === 0 ? -2 : 2);
+        const ez = cz + (i < 2 ? 2 : -2);
+        const eGeo = new THREE.BoxGeometry(elevWidth, building.height + 2, elevDepth);
+        eGeo.translate(ex, building.height / 2, ez);
+        elevGeos.push(eGeo);
+
+        // Park Elevator Cabs at random floors
+        const parkedFloor = 2 + (i * 3);
+        const cab = new THREE.BoxGeometry(elevWidth - 0.2, 2.5, elevDepth - 0.2);
+        cab.translate(ex, parkedFloor * fHeight, ez);
+        elevCabGeos.push(cab);
+      }
+      const sGeo = new THREE.BoxGeometry(2.5, building.height + 2, 2.5);
+      sGeo.translate(cx, building.height / 2, cz + 6);
+      elevGeos.push(sGeo);
+
+      // Main Vertical Risers
+      addPipe(cx - 4, building.height / 2, cz - 0.3, building.height, 0.3, 'y', cwGeos, false);
+      addPipe(cx - 4, building.height / 2, cz + 0.3, building.height, 0.3, 'y', hwGeos, false);
+      addPipe(cx + 4, building.height / 2, cz, building.height, 0.25, 'y', elecGeos, false);
+      addPipe(cx - 6, building.height / 2, cz + 2, building.height, 0.4, 'y', sewerGeos, false); // Sewer Riser
+      addPipe(cx + 6, building.height / 2, cz - 2, building.height, 0.15, 'y', fireGeos, false); // Fire Riser
+
+      // HVAC Main Shaft
+      const hvacShaft = new THREE.BoxGeometry(1.5, building.height, 1.5);
+      hvacShaft.translate(cx, building.height / 2, cz - 5);
+      hvacGeos.push(hvacShaft);
+
+      const scaleX = Math.min(1.0, bWidth / 60);
+      const scaleZ = Math.min(1.0, bDepth / 60);
+
+      const houseOffsets = [
+        [-8 * scaleX, -4 * scaleZ], [-14 * scaleX, -4 * scaleZ], [-20 * scaleX, -4 * scaleZ], [-26 * scaleX, -4 * scaleZ],
+        [8 * scaleX, -4 * scaleZ], [14 * scaleX, -4 * scaleZ], [20 * scaleX, -4 * scaleZ], [26 * scaleX, -4 * scaleZ],
+        [0, -10 * scaleZ],
+        [-8 * scaleX, 12 * scaleZ], [8 * scaleX, 12 * scaleZ], [-8 * scaleX, 20 * scaleZ], [8 * scaleX, 20 * scaleZ]
+      ];
+
+      for (let f = 1; f <= floorCount; f++) {
+        const y = f * fHeight;
+
+        const grid = new THREE.PlaneGeometry(bWidth * 0.9, bDepth * 0.9);
+        grid.rotateX(-Math.PI / 2);
+        grid.translate(cx, y, cz);
+        floorGeos.push(grid);
+
+        houseOffsets.forEach((ho, idx) => {
+          const hx = cx + ho[0];
+          const hz = cz + ho[1];
+
+          // Water route (Dual X-Z)
+          const wStartX = cx - 4;
+          const wLenX = Math.abs(hx - wStartX);
+          const signX = hx > wStartX ? 1 : -1;
+          const signZ = hz > cz ? 1 : -1;
+
+          if (wLenX > 0) {
+            const midX = (hx + wStartX) / 2;
+            addPipe(midX, y - 0.3, cz - 0.2, wLenX, 0.08, 'x', cwGeos); // Cold
+            addPipe(midX, y - 0.5, cz + 0.2, wLenX, 0.08, 'x', hwGeos); // Hot
+            addSupport(midX, y - 0.5, cz, 0.5); // Strut to ceiling
+
+            // HVAC & Fire
+            addDuct(midX, y + 0.8, cz - 1.5, wLenX, 0.8, 0.4, 'x', hvacGeos);
+            addPipe(midX, y + 0.6, cz + 1.5, wLenX, 0.05, 'x', fireGeos);
+
+            // Drainage (Sloped down slightly)
+            addPipe(midX, y - 1.2, cz + 1.0, wLenX, 0.15, 'x', sewerGeos);
+
+            // Branch Valve
+            if (idx % 2 === 0) {
+              addValve(wStartX + signX * 0.5, y - 0.3, cz - 0.2, 0.08, 'x', cwGeos);
+              addValve(wStartX + signX * 0.5, y - 0.5, cz + 0.2, 0.08, 'x', hwGeos);
+            }
+          }
+
+          const wLenZ = Math.abs(hz - cz);
+          if (wLenZ > 0) {
+            const midZ = (hz + cz) / 2;
+            addPipe(hx - 0.2, y - 0.3, midZ, wLenZ, 0.08, 'z', cwGeos); // Cold
+            addPipe(hx + 0.2, y - 0.5, midZ, wLenZ, 0.08, 'z', hwGeos); // Hot
+
+            // HVAC & Fire
+            addDuct(hx - 1.5, y + 0.8, midZ, wLenZ, 0.8, 0.4, 'z', hvacGeos);
+            addPipe(hx + 1.5, y + 0.6, midZ, wLenZ, 0.05, 'z', fireGeos);
+
+            // Drainage
+            addPipe(hx + 1.0, y - 1.2, midZ, wLenZ, 0.15, 'z', sewerGeos);
+
+            // Add corner elbows (spheres)
+            const cwCorner = new THREE.SphereGeometry(0.09, 8, 8); cwCorner.translate(hx - 0.2, y - 0.3, cz - 0.2); cwGeos.push(cwCorner);
+            const hwCorner = new THREE.SphereGeometry(0.09, 8, 8); hwCorner.translate(hx + 0.2, y - 0.5, cz + 0.2); hwGeos.push(hwCorner);
+          }
+
+          // Elec route (Grey tray)
+          const eStartX = cx + 4;
+          const eLenX = Math.abs(hx - eStartX);
+          if (eLenX > 0) {
+            addPipe((hx + eStartX) / 2, y + 0.3, cz, eLenX, 0.05, 'x', elecGeos, false);
+          }
+          const eLenZ = Math.abs(hz - cz);
+          if (eLenZ > 0) {
+            addPipe(hx, y + 0.3, (hz + cz) / 2, eLenZ, 0.05, 'z', elecGeos, false);
+            const eCorner = new THREE.BoxGeometry(0.12, 0.12, 0.12); eCorner.translate(hx, y + 0.3, cz); elecGeos.push(eCorner);
+          }
+
+          // Terminal Units (Meters / Pumps / Breaker boxes / Sprinkler Heads)
+          const cwNode = new THREE.CylinderGeometry(0.2, 0.2, 0.4); cwNode.translate(hx - 0.2, y - 0.3, hz); cwGeos.push(cwNode);
+          const hwNode = new THREE.CylinderGeometry(0.2, 0.2, 0.4); hwNode.translate(hx + 0.2, y - 0.5, hz); hwGeos.push(hwNode);
+          const eBox = new THREE.BoxGeometry(0.3, 0.5, 0.2); eBox.translate(hx, y + 0.3, hz); elecGeos.push(eBox);
+
+          const sprinkler = new THREE.CylinderGeometry(0.06, 0.06, 0.1); sprinkler.translate(hx + 1.5, y + 0.55, hz); fireGeos.push(sprinkler);
+          const vent = new THREE.BoxGeometry(0.6, 0.1, 0.6); vent.translate(hx - 1.5, y + 0.6, hz); hvacGeos.push(vent);
+        });
+      }
+
+      // Base Infrastructure (Ground Floor Plant Room)
+      const tankGeo = new THREE.CylinderGeometry(2.5, 2.5, 6, 16);
+      tankGeo.translate(cx - 8, 3, cz);
+      cwGeos.push(tankGeo);
+
+      const pumpGeo = new THREE.BoxGeometry(2, 2, 2.5);
+      pumpGeo.translate(cx - 4.5, 1.0, cz);
+      cwGeos.push(pumpGeo);
+
+      const elecCabinet = new THREE.BoxGeometry(4, 3, 1.5);
+      elecCabinet.translate(cx + 8, 1.5, cz);
+      elecGeos.push(elecCabinet);
+
+      const hvacChiller = new THREE.BoxGeometry(6, 4, 3);
+      hvacChiller.translate(cx, 2, cz - 10);
+      hvacGeos.push(hvacChiller);
+
+    } else {
+      addPipe(cx, building.height / 2, cz, building.height, 1.0, 'y', cwGeos, false);
+    }
+
+    return {
+      shellGeo: geo,
+      coldWaterGeo: cwGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(cwGeos, false) : null,
+      hotWaterGeo: hwGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(hwGeos, false) : null,
+      elecGeo: elecGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(elecGeos, false) : null,
+      elevatorGeo: elevGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(elevGeos, false) : null,
+      supportGeo: suppGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(suppGeos, false) : null,
+      floorGeo: floorGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(floorGeos, false) : null,
+      hvacGeo: hvacGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(hvacGeos, false) : null,
+      fireGeo: fireGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(fireGeos, false) : null,
+      sewerGeo: sewerGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(sewerGeos, false) : null,
+      columnGeo: colGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(colGeos, false) : null,
+      elevCabGeo: elevCabGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(elevCabGeos, false) : null,
+      fireExitGeo: fireExitGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(fireExitGeos, false) : null,
+      extinguisherGeo: extGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(extGeos, false) : null,
+      smokeDetectorGeo: smokeGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(smokeGeos, false) : null,
+      wallGeo: wallGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(wallGeos, false) : null,
+      pathwayGeo: pathwayGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(pathwayGeos, false) : null,
+      glassRailingGeo: glassRailingGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(glassRailingGeos, false) : null,
+      innerWallGeo: innerWallGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(innerWallGeos, false) : null,
+      hydrantGeo: hydrantGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(hydrantGeos, false) : null,
+      fireAlarmGeo: fireAlarmGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(fireAlarmGeos, false) : null,
+      hangingExitGeo: hangingExitGeos.length > 0 ? BufferGeometryUtils.mergeGeometries(hangingExitGeos, false) : null,
+      htmlMarkers
+    };
+  }, [building, isSchool, isApartment]);
+
+  const cx = building.center[0];
+  const cz = building.center[1];
+
+  return (
+    <group>
+      {isSchool && (
+        <SchoolModel url={schoolModelUrl} position={[cx, 0, cz]} rotation={[-Math.PI / 2, 0, 0]} scale={1.5} visibleSafetyLayers={visibleSafetyLayers} onAssetClick={onAssetClick} />
+      )}
+
+      {/* Ghost Shell (Clean White Glass) */}
+      {!isSchool && shellGeo && (
+        <mesh geometry={shellGeo}>
+          <meshStandardMaterial color="#f8fafc" transparent opacity={0.15} depthWrite={false} roughness={0.1} />
+        </mesh>
+      )}
+
+      {/* Interior Walls (Semi-transparent white) */}
+      {!isSchool && wallGeo && (
+        <mesh geometry={wallGeo}>
+          <meshStandardMaterial color="#f1f5f9" transparent opacity={0.4} depthWrite={false} side={THREE.DoubleSide} roughness={0.2} />
+        </mesh>
+      )}
+
+      {/* Primary Structure Edges */}
+      {!isSchool && shellGeo && (
+        <>
+          <lineSegments>
+            <edgesGeometry args={[shellGeo]} />
+            <lineBasicMaterial color="#cbd5e1" transparent opacity={0.3} />
+          </lineSegments>
+        </>
+      )}
+
+      {/* Red Evacuation Pathways */}
+      {!isSchool && pathwayGeo && (
+        <mesh geometry={pathwayGeo}>
+          <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.8} roughness={0.2} metalness={0.1} />
+        </mesh>
+      )}
+
+      {/* Industrial MEP & Structural Materials */}
+      {!isSchool && columnGeo && (
+        <mesh geometry={columnGeo}>
+          <meshStandardMaterial color="#9ca3af" roughness={0.9} metalness={0.1} />
+        </mesh>
+      )}
+      {!isSchool && coldWaterGeo && (
+        <mesh geometry={coldWaterGeo}>
+          <meshStandardMaterial color="#0284c7" roughness={0.4} metalness={0.6} />
+        </mesh>
+      )}
+      {!isSchool && hotWaterGeo && (
+        <mesh geometry={hotWaterGeo}>
+          <meshStandardMaterial color="#dc2626" roughness={0.4} metalness={0.6} />
+        </mesh>
+      )}
+      {!isSchool && sewerGeo && (
+        <mesh geometry={sewerGeo}>
+          <meshStandardMaterial color="#475569" roughness={0.8} metalness={0.2} />
+        </mesh>
+      )}
+      {!isSchool && fireGeo && (
+        <mesh geometry={fireGeo}>
+          <meshStandardMaterial color="#ef4444" emissive="#7f1d1d" emissiveIntensity={0.5} roughness={0.3} metalness={0.7} />
+        </mesh>
+      )}
+      {!isSchool && hvacGeo && (
+        <mesh geometry={hvacGeo}>
+          <meshStandardMaterial color="#cbd5e1" roughness={0.3} metalness={0.9} />
+        </mesh>
+      )}
+      {!isSchool && elecGeo && (
+        <mesh geometry={elecGeo}>
+          <meshStandardMaterial color="#94a3b8" roughness={0.7} metalness={0.3} />
+        </mesh>
+      )}
+      {!isSchool && supportGeo && (
+        <mesh geometry={supportGeo}>
+          <meshStandardMaterial color="#b91c1c" roughness={0.8} metalness={0.8} />
+        </mesh>
+      )}
+      {!isSchool && elevCabGeo && (
+        <mesh geometry={elevCabGeo}>
+          <meshStandardMaterial color="#f8fafc" roughness={0.2} metalness={1.0} />
+        </mesh>
+      )}
+      {!isSchool && elevatorGeo && (
+        <mesh geometry={elevatorGeo}>
+          <meshStandardMaterial color="#334155" transparent opacity={0.6} roughness={0.6} />
+        </mesh>
+      )}
+      {!isSchool && floorGeo && (
+        <mesh geometry={floorGeo}>
+          <meshStandardMaterial color="#f8fafc" roughness={0.1} metalness={0.1} />
+        </mesh>
+      )}
+      {/* Fire Safety Specific Materials */}
+      {!isSchool && fireExitGeo && (
+        <mesh geometry={fireExitGeo}>
+          <meshStandardMaterial color="#22c55e" emissive="#16a34a" emissiveIntensity={1.2} roughness={0.2} metalness={0.1} />
+        </mesh>
+      )}
+      {!isSchool && extinguisherGeo && (
+        <mesh geometry={extinguisherGeo}>
+          <meshStandardMaterial color="#ef4444" roughness={0.3} metalness={0.8} />
+        </mesh>
+      )}
+      {!isSchool && smokeDetectorGeo && (
+        <mesh geometry={smokeDetectorGeo}>
+          <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.2} roughness={0.1} metalness={0.9} />
+        </mesh>
+      )}
+
+      {/* New Detailed Corridor & Safety Materials */}
+      {!isSchool && glassRailingGeo && (
+        <mesh geometry={glassRailingGeo}>
+          <meshStandardMaterial color="#38bdf8" transparent opacity={0.3} roughness={0.0} metalness={0.8} depthWrite={false} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+      {!isSchool && innerWallGeo && (
+        <mesh geometry={innerWallGeo}>
+          <meshStandardMaterial color="#fafafa" roughness={0.8} metalness={0.1} />
+        </mesh>
+      )}
+      {!isSchool && hydrantGeo && (
+        <mesh geometry={hydrantGeo}>
+          <meshStandardMaterial color="#dc2626" roughness={0.3} metalness={0.8} />
+        </mesh>
+      )}
+      {!isSchool && fireAlarmGeo && (
+        <mesh geometry={fireAlarmGeo}>
+          <meshStandardMaterial color="#ef4444" roughness={0.2} metalness={0.2} />
+        </mesh>
+      )}
+      {!isSchool && hangingExitGeo && (
+        <mesh geometry={hangingExitGeo}>
+          <meshStandardMaterial color="#22c55e" emissive="#16a34a" emissiveIntensity={1.5} roughness={0.1} metalness={0.1} />
+        </mesh>
+      )}
+
+      {/* Render HTML Markers */}
+      {htmlMarkers && htmlMarkers.map(m => (
+        <Html key={m.id} position={m.pos} center zIndexRange={[100, 0]} className="pointer-events-none">
+          {m.type === 'exit' ? (
+            <div className="w-5 h-5 bg-green-600 text-white flex items-center justify-center rounded-sm border border-white shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18v-6a3 3 0 0 1 3-3h3" /><path d="M11 13l4-4-4-4" /><path d="M19 22V2a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v20" /></svg>
+            </div>
+          ) : (
+            <div className="w-4 h-4 bg-red-600 text-white flex items-center justify-center rounded-sm border border-white shadow-[0_0_8px_rgba(239,68,68,0.8)]">
+              <span className="text-[10px] leading-none" style={{ textShadow: '0 0 2px black' }}>🧯</span>
+            </div>
+          )}
+        </Html>
+      ))}
+    </group>
   );
 };
 
@@ -561,23 +1249,43 @@ const RoadsLayer = ({ roads, assetFilters, onFlyTo, onExpand, focusedLandmark }:
 
 // --- Base Environment Layers ---
 
-const CameraController = ({ targetPos, onArrived }: { targetPos: THREE.Vector3 | null, onArrived: () => void }) => {
+const CameraController = ({ targetPos, onArrived, instantSnap = false, topDown = false }: { targetPos: THREE.Vector3 | null, onArrived: () => void, instantSnap?: boolean, topDown?: boolean }) => {
   const targetLookAt = useRef(new THREE.Vector3());
   const targetCameraPos = useRef(new THREE.Vector3());
   const isAnimating = useRef(false);
 
   useEffect(() => {
     if (targetPos) {
-      targetLookAt.current.set(targetPos.x, 0, targetPos.z);
-      const height = targetPos.y > 0 ? targetPos.y : 180;
-      const zOffset = targetPos.y > 0 ? targetPos.y * 1.2 : 250;
-      targetCameraPos.current.set(targetPos.x, height, targetPos.z + zOffset);
+      if (topDown) {
+        // High-end Architectural Isometric Angle (like BIM software)
+        const topHeight = Math.max(targetPos.y > 0 ? targetPos.y * 1.8 : 80, 80);
+        const offset = topHeight * 0.6; // Push camera back and right
+        targetLookAt.current.set(targetPos.x, targetPos.y > 0 ? targetPos.y / 2 : 0, targetPos.z);
+        targetCameraPos.current.set(targetPos.x + offset, topHeight, targetPos.z + offset);
+      } else {
+        // Standard angled isometric perspective
+        targetLookAt.current.set(targetPos.x, targetPos.y > 0 ? targetPos.y / 2 : 0, targetPos.z);
+        const height = targetPos.y > 0 ? targetPos.y : 180;
+        const zOffset = targetPos.y > 0 ? targetPos.y * 1.2 : 250;
+        targetCameraPos.current.set(targetPos.x, height, targetPos.z + zOffset);
+      }
       isAnimating.current = true;
     }
-  }, [targetPos]);
+  }, [targetPos, topDown]);
 
   useFrame((state, delta) => {
     if (isAnimating.current && targetPos) {
+      if (instantSnap) {
+        state.camera.position.copy(targetCameraPos.current);
+        if (state.controls) {
+          (state.controls as any).target.copy(targetLookAt.current);
+          (state.controls as any).update();
+        }
+        isAnimating.current = false;
+        onArrived();
+        return;
+      }
+
       state.camera.position.lerp(targetCameraPos.current, 5 * delta);
       if (state.controls) {
         (state.controls as any).target.lerp(targetLookAt.current, 5 * delta);
@@ -585,7 +1293,6 @@ const CameraController = ({ targetPos, onArrived }: { targetPos: THREE.Vector3 |
       }
 
       if (state.camera.position.distanceTo(targetCameraPos.current) < 3) {
-        // Snap exactly to target and stop animating
         state.camera.position.copy(targetCameraPos.current);
         if (state.controls) {
           (state.controls as any).target.copy(targetLookAt.current);
@@ -596,7 +1303,6 @@ const CameraController = ({ targetPos, onArrived }: { targetPos: THREE.Vector3 |
       }
     }
   });
-
   return null;
 };
 
@@ -1345,11 +2051,12 @@ const LandmarksLayer = ({ buildings, onFlyTo, onExpand, focusedLandmark, assetFi
   const landmarks = useMemo(() => buildings.filter(b => {
     if (!b.name) return false;
 
-    const isKnown = (b.category === "mall" || b.category === "hospital" || b.category === "apartments" || b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food");
+    const isKnown = (b.category === "mall" || b.category === "hospital" || b.category === "apartments" || b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food" || b.category === "school");
     if (!assetFilters || assetFilters.all) return isKnown;
 
     if (assetFilters.apartments && (b.category === "apartments" || b.category === "residential")) return true;
     if (assetFilters.hospital && b.category === "hospital") return true;
+    if (assetFilters.schools && b.category === "school") return true;
     if (assetFilters.restaurants && (b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food")) return true;
 
     return false;
@@ -1377,11 +2084,17 @@ const LandmarksLayer = ({ buildings, onFlyTo, onExpand, focusedLandmark, assetFi
 
 const RealTrees = ({ trees }: { trees: number[][], isTransparent: boolean }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+
+  // Exclude tree specifically near the traffic signal post [-25.8, -154.5]
+  const validTrees = useMemo(() => {
+    return (trees || []).filter(t => Math.hypot(t[0] - (-25.8), t[1] - (-154.5)) > 14);
+  }, [trees]);
+
   useEffect(() => {
     if (meshRef.current) {
       const dummy = new THREE.Object3D();
       const color = new THREE.Color();
-      trees.forEach((t, i) => {
+      validTrees.forEach((t, i) => {
         dummy.position.set(t[0], 0, t[1]); // Ground the trees properly
         dummy.scale.setScalar(1 + Math.random() * 3);
         dummy.rotation.set(Math.random() * 0.2, Math.random() * Math.PI, Math.random() * 0.2);
@@ -1395,11 +2108,11 @@ const RealTrees = ({ trees }: { trees: number[][], isTransparent: boolean }) => 
       meshRef.current.instanceMatrix.needsUpdate = true;
       if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
     }
-  }, [trees]);
+  }, [validTrees]);
 
-  if (trees.length === 0) return null;
+  if (validTrees.length === 0) return null;
   return (
-    <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, trees.length]} castShadow={false} receiveShadow={false} material={treeMaterial}>
+    <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, validTrees.length]} castShadow={false} receiveShadow={false} material={treeMaterial}>
       <sphereGeometry args={[2, 7, 7]} />
     </instancedMesh>
   );
@@ -1421,6 +2134,9 @@ const DenseForest = ({ lakes }: { lakes?: any[], isTransparent: boolean }) => {
         // Scatter densely across a 4.5km map
         const x = (Math.random() - 0.5) * 4500;
         const z = (Math.random() - 0.5) * 4500;
+
+        // Prevent spawning trees right near the traffic signal post at [-25.8, -154.5]
+        if (Math.hypot(x - (-25.8), z - (-154.5)) < 16) continue;
 
         // Prevent spawning trees inside lakes
         let inLake = false;
@@ -1539,7 +2255,30 @@ const StreetlightsLayer = ({
 
         // One light per side, staggered so they alternate sides along the road
         const side = i % 2 === 0 ? 1 : -1;
-        arr.push(pt.clone().add(normal.clone().multiplyScalar(offset * side)));
+        const cand = pt.clone().add(normal.clone().multiplyScalar(offset * side));
+
+        // On the main trunk road (z between -158 and -142), remove lights in the middle of the road so only the 2 outer lines remain
+        if (cand.z > -158 && cand.z < -142 && cand.x > -450 && cand.x < 450) {
+          continue;
+        }
+
+        // Also check if candidate lands inside the roadway (< 6.8m) of any other road
+        let inMiddleOfRoad = false;
+        for (const otherRoad of roads) {
+          if (otherRoad.id === r.id || !otherRoad.line || otherRoad.line.length < 2) continue;
+          for (let k = 0; k < otherRoad.line.length; k++) {
+            const p = otherRoad.line[k];
+            if (Math.hypot(cand.x - p[0], cand.z - p[1]) < 6.8) {
+              inMiddleOfRoad = true;
+              break;
+            }
+          }
+          if (inMiddleOfRoad) break;
+        }
+        if (inMiddleOfRoad) continue;
+
+        arr.push(cand);
+
       }
     });
     return arr;
@@ -1653,45 +2392,45 @@ const StreetlightsLayer = ({
   // Manual screen-space click fallback — ensures clicks always work even if R3F's internal
   // interaction list loses track or if the 3D sphere is too tiny to hit via exact raycasting.
   const { camera, pointer } = useThree();
-  
+
   useEffect(() => {
     const handleClick = () => {
       if (!meshRef.current || points.length === 0) return;
-      
+
       let closestIdx = -1;
       let minDistance = Infinity;
       const threshold = 0.015; // ~0.75% of screen width/height, much more precise
-      
+
       const tempVector = new THREE.Vector3();
-      
+
       for (let i = 0; i < points.length; i++) {
         // Get the world position of the streetlight bulb
         tempVector.copy(points[i]);
         tempVector.y += 5; // Bulb is at y=5 relative to point
-        
+
         // Project to screen space (NDC: -1 to +1)
         tempVector.project(camera);
-        
+
         // If it's behind the camera, skip
         if (tempVector.z > 1 || tempVector.z < -1) continue;
-        
+
         // Calculate 2D distance to mouse pointer
         const dx = tempVector.x - pointer.x;
         const dy = tempVector.y - pointer.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        
+
         if (dist < threshold && dist < minDistance) {
           minDistance = dist;
           closestIdx = i;
         }
       }
-      
+
       if (closestIdx !== -1) {
         const assetId = `SL-${closestIdx % 100}`;
         onStreetlightClick(assetId, closestIdx);
       }
     };
-    
+
     window.addEventListener('laip-streetlight-manual-click', handleClick);
     return () => window.removeEventListener('laip-streetlight-manual-click', handleClick);
   }, [points, camera, pointer, onStreetlightClick]);
@@ -1845,7 +2584,7 @@ const TrafficEngine = ({ roads }: { roads: any[] }) => {
   if (paths.length === 0) return null;
   return (
     <group>
-      <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, numCars]}>
+      <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, numCars]} frustumCulled={false}>
         <boxGeometry args={[1.5, 0.8, 3]} />
         <meshStandardMaterial color="#00d2ff" emissive="#00d2ff" emissiveIntensity={1.5} />
       </instancedMesh>
@@ -2468,6 +3207,245 @@ const ExpandedLandmarkPanel = ({ landmark, onClose, onStartDriving, stationMetri
   );
 };
 
+// ==========================================
+// STRUCTURAL X-RAY TELEMETRY PANEL
+// ==========================================
+const BuildingTelemetryPanel = ({ building, onClose }: { building: any, onClose: () => void }) => {
+  if (!building) return null;
+  const hvacLoad = 45 + Math.floor(Math.random() * 30);
+  const waterPressure = 80 + Math.floor(Math.random() * 40);
+  const powerDraw = 120 + Math.floor(Math.random() * 80);
+
+  const isApartment = building.name?.toLowerCase().includes('cassia') || building.category === 'apartments' || building.name?.toLowerCase().includes('block');
+
+  return (
+    <div className="absolute top-[100px] left-[350px] w-80 bg-slate-900/90 border border-cyan-500/50 rounded-xl p-4 text-white z-50 backdrop-blur-md shadow-2xl shadow-cyan-900/20">
+      <div className="flex justify-between items-start mb-4">
+        <div>
+          <div className="text-xs text-cyan-400 font-mono tracking-wider mb-1">STRUCTURAL X-RAY</div>
+          <div className="text-lg font-bold truncate">{building.name || "Commercial Complex"}</div>
+          {isApartment && <div className="text-xs text-gray-400 mt-1 font-mono">14 Floors • 13 Units/Floor</div>}
+        </div>
+        <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-colors cursor-pointer">
+          <X size={16} />
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        <div className="bg-black/40 rounded-lg p-3 border border-white/5">
+          <div className="flex justify-between items-end mb-2">
+            <span className="text-xs text-gray-400 uppercase tracking-wider">HVAC Loop Pressure</span>
+            <span className="text-cyan-400 font-mono text-sm">{waterPressure} PSI</span>
+          </div>
+          <div className="w-full bg-slate-800 rounded-full h-1.5">
+            <div className="bg-cyan-400 h-1.5 rounded-full" style={{ width: `${(waterPressure / 120) * 100}%` }}></div>
+          </div>
+        </div>
+
+        <div className="bg-black/40 rounded-lg p-3 border border-white/5">
+          <div className="flex justify-between items-end mb-2">
+            <span className="text-xs text-gray-400 uppercase tracking-wider">Internal Power Draw</span>
+            <span className="text-orange-400 font-mono text-sm">{powerDraw} kW</span>
+          </div>
+          <div className="w-full bg-slate-800 rounded-full h-1.5">
+            <div className="bg-orange-400 h-1.5 rounded-full" style={{ width: `${(powerDraw / 200) * 100}%` }}></div>
+          </div>
+        </div>
+
+        <div className="bg-black/40 rounded-lg p-3 border border-white/5">
+          <div className="flex justify-between items-end mb-2">
+            <span className="text-xs text-gray-400 uppercase tracking-wider">Active Pipelines</span>
+            <span className="text-teal-400 font-mono text-sm">Nominal</span>
+          </div>
+          <div className="text-xs text-gray-500 mt-1">Flow rates optimal across 14 zones. No leakages detected in main trunks.</div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==========================================
+// SCHOOL FIRE SAFETY TELEMETRY PANEL
+// ==========================================
+const SchoolFireSafetyPanel = ({
+  building,
+  onClose,
+  visibleSafetyLayers,
+  setVisibleSafetyLayers,
+  selectedSafetyAsset,
+  setSelectedSafetyAsset
+}: any) => {
+  if (!building) return null;
+
+  const layerOptions = [
+    { id: 'fire_extinguishers', label: 'Extinguishers', status: '100% OK' },
+    { id: 'hydrants', label: 'Hydrants', status: 'ACTIVE' },
+    { id: 'fire_alarms', label: 'Fire Alarms', status: 'ONLINE' },
+    { id: 'smoke_detectors', label: 'Smoke Detectors', status: 'ONLINE' },
+    { id: 'emergency_exits', label: 'Emergency Exits', status: 'CLEAR', fullWidth: true }
+  ];
+
+  const toggleLayer = (id: string) => {
+    if (visibleSafetyLayers.includes(id)) {
+      setVisibleSafetyLayers(visibleSafetyLayers.filter((l: string) => l !== id));
+    } else {
+      setVisibleSafetyLayers([...visibleSafetyLayers, id]);
+    }
+  };
+
+  return (
+    <div className="absolute top-[80px] right-6 w-96 bg-slate-900/95 border border-red-500/50 rounded-xl p-5 text-white z-[9999] backdrop-blur-md shadow-2xl shadow-red-900/30 overflow-y-auto max-h-[85vh]">
+      <div className="flex justify-between items-start mb-5 border-b border-white/10 pb-4">
+        <div>
+          <div className="text-xs text-red-400 font-mono tracking-wider mb-1 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>
+            FIRE & SAFETY COMPLIANCE
+          </div>
+          <div className="text-xl font-bold truncate">{building.name || "Educational Facility"}</div>
+          <div className="text-xs text-gray-400 mt-1 font-mono">Simulated Emergency Overlay</div>
+        </div>
+        <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-colors cursor-pointer shrink-0">
+          <X size={16} />
+        </button>
+      </div>
+
+      <div className="space-y-5">
+
+        {/* Selected Asset Details Overlay */}
+        {selectedSafetyAsset && (
+          <div className="bg-slate-800/80 rounded-lg p-4 border border-cyan-500/30 relative shadow-[0_0_15px_rgba(6,182,212,0.15)]">
+            <button
+              onClick={() => setSelectedSafetyAsset(null)}
+              className="absolute top-3 right-3 text-gray-400 hover:text-white"
+            >
+              <X size={14} />
+            </button>
+            <div className="text-xs text-cyan-400 uppercase tracking-widest font-bold mb-3">Asset Details</div>
+
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-400">ID:</span>
+                <span className="font-mono text-gray-200 truncate max-w-[150px]" title={selectedSafetyAsset.id}>{selectedSafetyAsset.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Type:</span>
+                <span className="text-gray-200">{selectedSafetyAsset.type}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Floor:</span>
+                <span className="text-gray-200">{selectedSafetyAsset.floor}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Location:</span>
+                <span className="text-gray-200">{selectedSafetyAsset.location}</span>
+              </div>
+
+              <div className="h-px bg-white/10 my-2"></div>
+
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400">Status:</span>
+                <span className={`px-2 py-0.5 rounded text-xs font-bold ${selectedSafetyAsset.status === 'OK' ? 'bg-green-500/20 text-green-400' :
+                  selectedSafetyAsset.status === 'Warning' ? 'bg-orange-500/20 text-orange-400' :
+                    'bg-red-500/20 text-red-400'
+                  }`}>
+                  {selectedSafetyAsset.status}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Last Inspection:</span>
+                <span className="font-mono text-gray-200">{selectedSafetyAsset.lastInspection}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Maintenance Due:</span>
+                <span className="font-mono text-gray-200">{selectedSafetyAsset.nextInspection}</span>
+              </div>
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              <button className="flex-1 bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-400 border border-cyan-500/30 py-1.5 rounded text-xs font-bold tracking-wider transition-colors">
+                VIEW LOGS
+              </button>
+              <button className="flex-1 bg-white/5 hover:bg-white/10 text-white border border-white/10 py-1.5 rounded text-xs font-bold tracking-wider transition-colors">
+                DISPATCH
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Semantic Layer Controls */}
+        <div>
+          <div className="text-xs text-gray-400 uppercase tracking-widest mb-3">Live Safety Tracking</div>
+          <div className="grid grid-cols-2 gap-2">
+            {layerOptions.map(layer => {
+              const isActive = visibleSafetyLayers.includes(layer.id);
+              return (
+                <div
+                  key={layer.id}
+                  onClick={() => toggleLayer(layer.id)}
+                  className={`rounded-lg p-2 border flex flex-col justify-center cursor-pointer transition-colors ${layer.fullWidth ? 'col-span-2' : ''
+                    } ${isActive
+                      ? 'bg-blue-900/30 border-blue-500/40 hover:bg-blue-900/40'
+                      : 'bg-black/40 border-white/5 opacity-50 hover:opacity-80'
+                    }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">{layer.label}</span>
+                    <span className={`text-xs font-mono ${isActive ? 'text-green-400' : 'text-gray-500'}`}>
+                      {isActive ? layer.status : 'HIDDEN'}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Inspection Module */}
+        <div>
+          <div className="text-xs text-gray-400 uppercase tracking-widest mb-3">Inspection Module</div>
+          <div className="bg-black/40 rounded-lg border border-white/5 divide-y divide-white/5">
+            <div className="p-3 flex justify-between items-center hover:bg-white/5 transition-colors cursor-pointer">
+              <span className="text-sm text-gray-300">Inspection Checklists</span>
+              <span className="text-xs text-cyan-400 font-mono">12 Pending</span>
+            </div>
+            <div className="p-3 flex justify-between items-center hover:bg-white/5 transition-colors cursor-pointer">
+              <span className="text-sm text-gray-300">Mobile Inspections</span>
+              <span className="text-xs text-gray-500 font-mono">Synced</span>
+            </div>
+            <div className="p-3 flex justify-between items-center hover:bg-white/5 transition-colors cursor-pointer">
+              <span className="text-sm text-gray-300">Audit History</span>
+              <span className="text-xs text-gray-500 font-mono">View All &rarr;</span>
+            </div>
+            <div className="p-3 flex justify-between items-center hover:bg-white/5 transition-colors cursor-pointer">
+              <span className="text-sm text-gray-300">Regulatory Reports</span>
+              <span className="text-xs text-green-400 font-mono">Compliant</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Alerts Module */}
+        <div className="bg-red-950/40 rounded-lg p-4 border border-red-500/30">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs text-red-400 uppercase tracking-widest font-bold">System Alerts</span>
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-start gap-2 text-sm text-red-200 bg-red-900/20 p-2 rounded border border-red-500/20 shadow-[inset_0_0_10px_rgba(239,68,68,0.1)] relative overflow-hidden group">
+              <div className="absolute inset-0 bg-red-500/10 animate-[pulse_2s_ease-in-out_infinite]"></div>
+              <span className="font-bold shrink-0 relative z-10">FAILED:</span>
+              <span className="relative z-10">Safety check failed at East Wing Corridor. Extinguisher pressure low.</span>
+            </div>
+            <div className="flex items-start gap-2 text-sm text-orange-200 bg-orange-900/20 p-2 rounded border border-orange-500/20">
+              <span className="font-bold shrink-0">WARNING:</span>
+              <span>Regulatory compliance inspection expires in 3 days.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, cameraMode = 'map', cityCenter }: { isShowFlights?: boolean, rainIntensity?: number, cameraMode?: 'map' | 'drone', cityCenter?: { id: string, lat: number, lon: number, alt: number, label: string } }) => {
   const tilesLat = cityCenter?.lat ?? LAT_CENTER;
   const tilesLon = cityCenter?.lon ?? LON_CENTER;
@@ -2496,10 +3474,15 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const [mapMode, setMapMode] = useState<'SATELLITE' | 'ROADMAP' | 'HYBRID'>('HYBRID');
   const [focusedLandmark, setFocusedLandmark] = useState<any>(null);
   const [expandedLandmark, setExpandedLandmark] = useState<any>(null);
+  const [xrayBuilding, setXrayBuilding] = useState<any>(null);
   const [selectedPhase, setSelectedPhase] = useState<any>(null);
   const [isDriveMode, setIsDriveMode] = useState(false);
   const [isCityTransparent, setIsCityTransparent] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  // Fire Safety Semantic Layer State
+  const [visibleSafetyLayers, setVisibleSafetyLayers] = useState<string[]>(['fire_extinguishers', 'hydrants', 'fire_alarms', 'emergency_exits', 'smoke_detectors']);
+  const [selectedSafetyAsset, setSelectedSafetyAsset] = useState<any>(null);
   const [isTrafficSimActive, setIsTrafficSimActive] = useState(false);
   const exportGroupRef = useRef<THREE.Group>(null);
 
@@ -2846,16 +3829,18 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
     let apartments = 0;
     let restaurants = 0;
     let hospital = 0;
+    let schools = 0;
 
     cityData.buildings.forEach((b: any) => {
       if (!b.name) return;
       if (b.category === "apartments" || b.category === "residential") apartments++;
       if (b.category === "hospital") hospital++;
       if (b.category === "restaurant" || b.category === "cafe" || b.category === "fast_food") restaurants++;
+      if (b.category === "school") schools++;
     });
 
     window.dispatchEvent(new CustomEvent('laip-asset-counts', {
-      detail: { apartments, restaurants, hospital, evStations: evStations.length, roads: cityData.roads.length, traffic: 1000 }
+      detail: { apartments, restaurants, hospital, schools, evStations: evStations.length, roads: cityData.roads.length, traffic: 1000 }
     }));
   }, [cityData, evStations]);
 
@@ -2898,6 +3883,9 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
   const showStreetlights = !anyCategorySelected || (categoryFilters?.streetlights ?? false);
   const showLandmarkPins = masterVisible && !anyCategorySelected;
 
+  // Optimize performance when user isolates the "Schools" filter
+  const isSchoolFocusMode = assetFilters?.schools && !assetFilters?.all && !assetFilters?.apartments && !assetFilters?.hospital && !assetFilters?.restaurants;
+
 
   return (
     <div className="flex-1 relative w-full h-full" style={{ backgroundColor: skyColor }}>
@@ -2921,11 +3909,10 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
                 <button
                   key={mode}
                   onClick={() => setMapMode(mode)}
-                  className={`text-[10px] font-bold px-3 py-1 rounded-lg tracking-wider transition-all duration-200 ${
-                    mapMode === mode
-                      ? 'bg-cyan-500 text-black shadow-[0_0_8px_rgba(0,210,255,0.6)]'
-                      : 'text-white/50 hover:text-white hover:bg-white/10'
-                  }`}
+                  className={`text-[10px] font-bold px-3 py-1 rounded-lg tracking-wider transition-all duration-200 ${mapMode === mode
+                    ? 'bg-cyan-500 text-black shadow-[0_0_8px_rgba(0,210,255,0.6)]'
+                    : 'text-white/50 hover:text-white hover:bg-white/10'
+                    }`}
                 >
                   {mode}
                 </button>
@@ -3112,17 +4099,40 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
         />
       )}
 
+      {/* Building X-Ray Telemetry Panel */}
+      {xrayBuilding && (
+        (xrayBuilding.category === 'school') ? (
+          <SchoolFireSafetyPanel
+            building={xrayBuilding}
+            onClose={() => {
+              setXrayBuilding(null);
+              setCameraTarget(null);
+              setSelectedSafetyAsset(null);
+            }}
+            visibleSafetyLayers={visibleSafetyLayers}
+            setVisibleSafetyLayers={setVisibleSafetyLayers}
+            selectedSafetyAsset={selectedSafetyAsset}
+            setSelectedSafetyAsset={setSelectedSafetyAsset}
+          />
+        ) : (
+          <BuildingTelemetryPanel
+            building={xrayBuilding}
+            onClose={() => setXrayBuilding(null)}
+          />
+        )
+      )}
 
-      <Canvas 
-        onPointerMissed={() => { 
-          setExpandedLandmark(null); 
+      <Canvas
+        onPointerMissed={() => {
+          setExpandedLandmark(null);
           setExpandedGridNode(null);
+          setXrayBuilding(null);
           // Fallback: manually raycast streetlights ONLY when clicking empty space
           // This prevents accidental clicks when panning the camera or clicking other assets.
           requestAnimationFrame(() => {
             window.dispatchEvent(new CustomEvent('laip-streetlight-manual-click'));
           });
-        }} 
+        }}
         camera={{ position: [0, 800, 1000], fov: 40, near: 1, far: 50000 }}
         gl={{ logarithmicDepthBuffer: true }}
       >
@@ -3139,7 +4149,14 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
         <Environment preset={renderNight ? "night" : "city"} />
 
         <ambientLight intensity={ambientIntensity} color="#ffffff" />
-        <CameraController targetPos={cameraTarget} onArrived={() => setCameraTarget(null)} />
+        {cameraTarget && (
+          <CameraController
+            targetPos={cameraTarget}
+            onArrived={() => setCameraTarget(null)}
+            instantSnap={!!xrayBuilding}
+            topDown={xrayBuilding?.category === 'school'}
+          />
+        )}
         <directionalLight
           position={lightPos as [number, number, number]}
           intensity={dirIntensity}
@@ -3159,7 +4176,58 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
           {/* Group for Unity Export */}
           <group ref={exportGroupRef}>
             {/* Render Massive Mega-Mesh Map — JP Nagar only */}
-            {isHomeCity && cityData && showBuildings && <MergedCityMap buildings={cityData.buildings} isTransparent={isCityTransparent} />}
+            {isHomeCity && cityData && showBuildings && (
+              <MergedCityMap
+                buildings={cityData.buildings}
+                isTransparent={isCityTransparent || !!xrayBuilding}
+                hiddenBuildingIds={xrayBuilding?.hiddenIds || (xrayBuilding ? [xrayBuilding.id] : [])}
+                onBuildingClick={(b) => {
+                  let targetBuilding = b;
+                  let hiddenIds = [b.id];
+                  if (b.category === 'school') {
+                    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+                    b.polygon.forEach((pt: number[]) => {
+                      minX = Math.min(minX, pt[0]); maxX = Math.max(maxX, pt[0]);
+                      minZ = Math.min(minZ, pt[1]); maxZ = Math.max(maxZ, pt[1]);
+                    });
+                    const isMassive = (maxX - minX > 120 || maxZ - minZ > 120);
+                    if (isMassive && cityData?.buildings) {
+                      const insideBuildings = cityData.buildings.filter((otherB: any) => {
+                        if (otherB.id === b.id) return false;
+                        let inside = false;
+                        const vs = b.polygon;
+                        const x = otherB.center[0], z = otherB.center[1];
+                        for (let k = 0, j = vs.length - 1; k < vs.length; j = k++) {
+                          const xi = vs[k][0], yi = -vs[k][1];
+                          const xj = vs[j][0], yj = -vs[j][1];
+                          const intersect = ((yi > z) != (yj > z)) && (x < (xj - xi) * (z - yi) / (yj - yi) + xi);
+                          if (intersect) inside = !inside;
+                        }
+                        return inside;
+                      });
+                      if (insideBuildings.length > 0) {
+                        insideBuildings.sort((a: any, bObj: any) => {
+                          let aMinX = Infinity, aMaxX = -Infinity, aMinZ = Infinity, aMaxZ = -Infinity;
+                          a.polygon.forEach((pt: number[]) => { aMinX = Math.min(aMinX, pt[0]); aMaxX = Math.max(aMaxX, pt[0]); aMinZ = Math.min(aMinZ, pt[1]); aMaxZ = Math.max(aMaxZ, pt[1]); });
+                          let bMinX = Infinity, bMaxX = -Infinity, bMinZ = Infinity, bMaxZ = -Infinity;
+                          bObj.polygon.forEach((pt: number[]) => { bMinX = Math.min(bMinX, pt[0]); bMaxX = Math.max(bMaxX, pt[0]); bMinZ = Math.min(bMinZ, pt[1]); bMaxZ = Math.max(bMaxZ, pt[1]); });
+                          return ((bMaxX - bMinX) * (bMaxZ - bMinZ)) - ((aMaxX - aMinX) * (aMaxZ - aMinZ));
+                        });
+                        targetBuilding = { ...insideBuildings[0], category: 'school', name: b.name };
+                        hiddenIds = [b.id, ...insideBuildings.map((ib: any) => ib.id)];
+                      }
+                    }
+                  }
+                  if (isSchoolFocusMode && targetBuilding.category !== 'school') return;
+                  targetBuilding.hiddenIds = hiddenIds;
+                  setXrayBuilding(targetBuilding);
+                  setCameraTarget(new THREE.Vector3(targetBuilding.center[0], targetBuilding.height || 20, targetBuilding.center[1]));
+                }}
+              />
+            )}
+
+            {/* Render X-Ray Building if selected */}
+            {xrayBuilding && <XRayBuilding building={xrayBuilding} visibleSafetyLayers={visibleSafetyLayers} onAssetClick={(a) => setSelectedSafetyAsset(a)} />}
 
             {/* Interactive Roads Layer — JP Nagar only */}
             {isHomeCity && cityData && showRoads && <RoadsLayer roads={cityData.roads} assetFilters={assetFilters} onFlyTo={handleFlyTo} onExpand={handleExpand} focusedLandmark={focusedLandmark} isTransparent={isCityTransparent} />}
@@ -3168,8 +4236,8 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
             {isHomeCity && cityData?.lakes && showWaterBodies && <LakesLayer lakes={cityData.lakes} />}
 
             {/* Real Trees & Procedural Lush Forest — JP Nagar only */}
-            {isHomeCity && cityData?.trees && showWaterBodies && <RealTrees trees={cityData.trees} isTransparent={isCityTransparent} />}
-            {isHomeCity && showWaterBodies && <DenseForest lakes={cityData?.lakes} isTransparent={isCityTransparent} />}
+            {isHomeCity && cityData?.trees && showWaterBodies && !isSchoolFocusMode && <RealTrees trees={cityData.trees} isTransparent={isCityTransparent} />}
+            {isHomeCity && showWaterBodies && !isSchoolFocusMode && <DenseForest lakes={cityData?.lakes} isTransparent={isCityTransparent} />}
 
             {/* Streetlights — JP Nagar only */}
             {isHomeCity && cityData?.roads && showStreetlights && (
@@ -3251,19 +4319,19 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
           )}
 
           {/* Dynamic Traffic Engine — JP Nagar only (hide if driving to avoid collision glitches; filter incident road if sim active) */}
-          {isHomeCity && !isDriveMode && cityData?.roads && (assetFilters?.traffic !== false) && (
+          {isHomeCity && !isDriveMode && !isSchoolFocusMode && cityData?.roads && (assetFilters?.traffic !== false) && (
             <TrafficEngine
               roads={isTrafficSimActive ? cityData.roads.filter((r: any) => r.id !== 92194637) : cityData.roads}
             />
           )}
 
           {/* Traffic Incident Simulation Layer — JP Nagar (home city) when activated via sidebar */}
-          {isHomeCity && cityData?.roads && isTrafficSimActive && (
+          {isHomeCity && cityData?.roads && !isSchoolFocusMode && isTrafficSimActive && (
             <TrafficIncidentSim roads={cityData.roads} cityData={cityData} />
           )}
 
           {/* Dynamic Flight Engine */}
-          {isShowFlights && <FlightEngine />}
+          {isShowFlights && !isSchoolFocusMode && <FlightEngine />}
 
           {/* Orbit Controls tuned for massive drone view zooming */}
           {cameraMode === 'map' && (
@@ -3272,7 +4340,7 @@ export const CityStreetViewer = ({ isShowFlights = true, rainIntensity = 5, came
               enabled={!isDriveMode}
               maxPolarAngle={Math.PI / 2.1}
               minPolarAngle={Math.PI / 8}
-              minDistance={100}
+              minDistance={1}
               maxDistance={cityCenter?.id === 'san-francisco' ? 1500 : 25000}
               target={[0, 0, 0]}
             />
