@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Activity, MessageSquare, Sliders, Zap, Radio, RefreshCw, Navigation, AlertTriangle, CheckCircle2, Lightbulb, ArrowUpRight, ChevronRight, ChevronLeft, Send, Loader2, X } from 'lucide-react';
+import { Activity, MessageSquare, Sliders, Zap, Radio, RefreshCw, Navigation, AlertTriangle, CheckCircle2, Lightbulb, ArrowUpRight, ChevronRight, ChevronLeft, Send, Loader2, X, Camera, Shield, Truck, Siren, Cpu } from 'lucide-react';
 
 const COPILOT_API = 'http://localhost:8001/api/copilot';
 const SAMPLE_QUESTION = 'What happens to the local grid if 10 EV chargers pull max power?';
@@ -182,6 +182,7 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
   const [trafficSimState, setTrafficSimState] = useState<string>('NORMAL');
   const [trafficIncident, setTrafficIncident] = useState<any>(null);
   const [trafficHistory, setTrafficHistory] = useState<any[]>([]);
+  const [selectedIncidentType, setSelectedIncidentType] = useState<'Vehicle Accident' | 'Vehicle Breakdown'>('Vehicle Accident');
 
   useEffect(() => {
     const handleTrafficSimState = (e: any) => {
@@ -196,7 +197,9 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
   }, []);
 
   const handleStartIncident = () => {
-    window.dispatchEvent(new CustomEvent('laip-start-incident'));
+    window.dispatchEvent(new CustomEvent('laip-start-incident', {
+      detail: { incidentType: selectedIncidentType }
+    }));
   };
 
   const [isTrafficSimMode, setIsTrafficSimMode] = useState(false);
@@ -406,17 +409,62 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
 
           {/* ── Simulation Controls ─────────────────────────────────────── */}
           {isTrafficSimMode && (
-            <div className="mb-4 flex items-center gap-2">
+            <div className="mb-4 flex flex-col gap-2">
               {trafficSimState === 'NORMAL' ? (
-                /* Start button */
-                <button
-                  id="btn-start-incident"
-                  onClick={handleStartIncident}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-wider bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-500/40 shadow-[0_0_12px_rgba(239,68,68,0.2)] transition-all cursor-pointer"
-                >
-                  <AlertTriangle size={13} />
-                  Start Incident
-                </button>
+                /* Protocol selector & Start button */
+                <div className="flex flex-col gap-2 w-full">
+                  <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                    <span>Incident Scenario Protocol:</span>
+                    <span className="text-cyan-400 font-mono text-[9px]">{selectedIncidentType}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedIncidentType('Vehicle Accident')}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col ${
+                        selectedIncidentType === 'Vehicle Accident'
+                          ? 'bg-red-500/15 border-red-500/60 text-white shadow-[0_0_10px_rgba(239,68,68,0.2)] ring-1 ring-red-500/40'
+                          : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-bold text-[10px] text-red-400 mb-0.5">
+                        <AlertTriangle size={11} />
+                        <span>Accident</span>
+                      </div>
+                      <span className="text-[8.5px] text-gray-400 leading-tight">
+                        Police PCR & EMS dispatch
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedIncidentType('Vehicle Breakdown')}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col ${
+                        selectedIncidentType === 'Vehicle Breakdown'
+                          ? 'bg-amber-500/15 border-amber-500/60 text-white shadow-[0_0_10px_rgba(245,158,11,0.2)] ring-1 ring-amber-500/40'
+                          : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-bold text-[10px] text-amber-400 mb-0.5">
+                        <Truck size={11} />
+                        <span>Breakdown</span>
+                      </div>
+                      <span className="text-[8.5px] text-gray-400 leading-tight">
+                        Heavy municipal tow truck
+                      </span>
+                    </button>
+                  </div>
+
+                  <button
+                    id="btn-start-incident"
+                    onClick={handleStartIncident}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-wider bg-red-600/25 hover:bg-red-600/40 text-red-400 border border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.25)] hover:scale-[1.01] transition-all cursor-pointer"
+                  >
+                    <AlertTriangle size={13} />
+                    Trigger {selectedIncidentType}
+                  </button>
+                </div>
               ) : (
                 /* Pause + Stop + Spinner */
                 <div className="flex-1 flex items-center gap-3 mx-1">
@@ -535,55 +583,216 @@ export const RightPanel = ({ isNight, isRain, isEvSim, isStreetlightsSim, isStre
                   </div>
                 </div>
 
-                {/* Active Incident Details Card */}
+                {/* Active Incident Details & Emergency Action Status Cards */}
                 {trafficIncident && trafficSimState !== 'NORMAL' && (
-                  <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3">
-                    <div className="text-xs font-semibold text-orange-400 mb-2 flex items-center justify-between">
-                      <span className="flex items-center gap-1.5"><AlertTriangle size={12} /> Active Alert: {trafficIncident.type}</span>
-                      <span className="text-[9px] text-gray-500">{trafficIncident.timestamp}</span>
+                  <div className="flex flex-col gap-3">
+                    {/* Basic Incident Overview Card */}
+                    <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3">
+                      <div className="text-xs font-semibold text-orange-400 mb-2 flex items-center justify-between">
+                        <span className="flex items-center gap-1.5"><AlertTriangle size={12} /> Active Alert: {trafficIncident.type}</span>
+                        <span className="text-[9px] text-gray-500">{trafficIncident.timestamp}</span>
+                      </div>
+                      
+                      <div className="space-y-1 text-[10px] text-gray-300">
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Location:</span>
+                          <span className="font-semibold text-white truncate max-w-[150px]">{trafficIncident.roadName}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Severity:</span>
+                          <span className="text-red-400 font-semibold">{trafficIncident.severity}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Lanes Blocked:</span>
+                          <span className="text-white">{trafficIncident.lanesAffected}</span>
+                        </div>
+                        <div className="flex justify-between border-t border-white/5 pt-1.5 mt-1.5">
+                          <span className="text-gray-500">Routing Mode:</span>
+                          <span className={`font-semibold ${trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' ? 'text-green-400' : 'text-yellow-400'}`}>
+                            {trafficSimState === 'CONGESTION_BUILDUP' && 'Recalculating network...'}
+                            {trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' && 'AI Rerouting Active (Bypass Street)'}
+                            {trafficSimState === 'RECOVERY' && 'Clearing Blockage'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' && (
+                        <div className="mt-2.5 p-2 bg-blue-500/10 border border-blue-500/30 rounded text-[9px] text-blue-300 leading-relaxed">
+                          <span className="font-bold text-white">✦ Dual AI Bypass Active:</span>
+                          <div className="mt-1 space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />
+                              <span><strong className="text-cyan-300">Primary Bypass:</strong> Left turn before breakdown via North Corridor</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+                              <span><strong className="text-orange-300">Early Diversion:</strong> Upstream orange route active to prevent junction choke</span>
+                            </div>
+                            <div className="text-[8px] text-gray-400 pt-0.5 border-t border-white/5">
+                              Strict bottleneck control: 0 vehicles pass breakdown area until recovery
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    
-                    <div className="space-y-1 text-[10px] text-gray-300">
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Location:</span>
-                        <span className="font-semibold text-white truncate max-w-[150px]">{trafficIncident.roadName}</span>
+
+                    {/* ── Emergency Action Status & Authority Dispatch Section ── */}
+                    <div className="bg-slate-900/90 border border-cyan-500/30 rounded-xl p-3.5 shadow-xl flex flex-col gap-3">
+                      {/* Header */}
+                      <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1.5 rounded-lg bg-cyan-500/20 text-cyan-400">
+                            <Camera size={13} />
+                          </div>
+                          <div>
+                            <div className="text-[11px] font-bold text-white uppercase tracking-wider">
+                              Incident Action Status
+                            </div>
+                            <div className="text-[8.5px] text-gray-400">
+                              CCTV Telemetry · Authority Dispatch
+                            </div>
+                          </div>
+                        </div>
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-[8.5px] font-mono font-semibold text-emerald-400 animate-pulse">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                          CAM-JP04 LIVE
+                        </span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Severity:</span>
-                        <span className="text-red-400 font-semibold">{trafficIncident.severity}</span>
+
+                      {/* Live CCTV Simulated Monitor View */}
+                      <div className="relative rounded-lg overflow-hidden border border-cyan-500/40 bg-[#050811] p-2.5 flex flex-col justify-between h-28 select-none shadow-inner">
+                        {/* Overlay scanline pattern */}
+                        <div className="absolute inset-0 pointer-events-none opacity-15 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:12px_12px]" />
+                        
+                        {/* Top monitor bar */}
+                        <div className="relative z-10 flex items-center justify-between text-[8.5px] font-mono">
+                          <span className="flex items-center gap-1 text-red-400 font-bold">
+                            <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                            REC [●] CAM-JP04
+                          </span>
+                          <span className="text-gray-400">{trafficIncident.timestamp || 'LIVE'}</span>
+                          <span className="text-cyan-400 font-semibold">1080P · 30 FPS</span>
+                        </div>
+
+                        {/* Optical Detection Box in center */}
+                        <div className="relative z-10 my-auto self-center border border-red-500/70 bg-red-500/10 rounded px-3 py-1.5 text-center flex flex-col items-center">
+                          <div className="text-[9px] font-mono font-bold text-red-400 flex items-center gap-1">
+                            <AlertTriangle size={10} />
+                            <span>DETECT: {trafficIncident.type.toUpperCase()}</span>
+                          </div>
+                          <div className="text-[8px] font-mono text-gray-300">
+                            CONFIDENCE: 98.8% · LANE 1 BLOCKED
+                          </div>
+                        </div>
+
+                        {/* Bottom status line */}
+                        <div className="relative z-10 flex items-center justify-between text-[8px] font-mono pt-1 border-t border-white/10">
+                          <span className="text-emerald-400 font-semibold">
+                            {trafficIncident.actionSteps?.[0]?.status === 'completed'
+                              ? '✓ EVIDENCE PHOTO TRANSMITTED'
+                              : 'CAPTURING SCENE FRAME...'}
+                          </span>
+                          <span className="text-gray-400">GPS: 12.9081°N, 77.5854°E</span>
+                        </div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Lanes Blocked:</span>
-                        <span className="text-white">{trafficIncident.lanesAffected}</span>
-                      </div>
-                      <div className="flex justify-between border-t border-white/5 pt-1.5 mt-1.5">
-                        <span className="text-gray-500">Routing Mode:</span>
-                        <span className={`font-semibold ${trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' ? 'text-green-400' : 'text-yellow-400'}`}>
-                          {trafficSimState === 'CONGESTION_BUILDUP' && 'Recalculating network...'}
-                          {trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' && 'AI Rerouting Active (Bypass Street)'}
-                          {trafficSimState === 'RECOVERY' && 'Clearing Blockage'}
+
+                      {/* Progressive Action Step Timeline */}
+                      {trafficIncident.actionSteps && trafficIncident.actionSteps.length > 0 && (
+                        <div className="flex flex-col gap-2 mt-0.5">
+                          <div className="text-[9.5px] font-semibold text-gray-300 flex items-center gap-1">
+                            <Navigation size={10} className="text-cyan-400" />
+                            <span>Response & Dispatch Protocol:</span>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            {trafficIncident.actionSteps.map((step: any) => {
+                              const isDone = step.status === 'completed';
+                              const isCurrent = step.status === 'in_progress';
+                              return (
+                                <div
+                                  key={step.id}
+                                  className={`p-2 rounded-lg border transition-all flex items-start gap-2.5 ${
+                                    isDone
+                                      ? 'bg-emerald-500/5 border-emerald-500/30 text-gray-200'
+                                      : isCurrent
+                                      ? 'bg-cyan-500/10 border-cyan-500/40 text-white shadow-[0_0_8px_rgba(6,182,212,0.15)]'
+                                      : 'bg-white/5 border-white/5 text-gray-500 opacity-60'
+                                  }`}
+                                >
+                                  <div className="mt-0.5 shrink-0">
+                                    {isDone ? (
+                                      <div className="w-4 h-4 rounded-full bg-emerald-500/20 border border-emerald-500/50 flex items-center justify-center text-emerald-400">
+                                        <CheckCircle2 size={10} />
+                                      </div>
+                                    ) : isCurrent ? (
+                                      <div className="w-4 h-4 rounded-full bg-cyan-500/20 border border-cyan-500/50 flex items-center justify-center text-cyan-400 animate-spin">
+                                        <Loader2 size={10} />
+                                      </div>
+                                    ) : (
+                                      <div className="w-4 h-4 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-gray-500">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-gray-500" />
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between gap-1">
+                                      <span className={`text-[9.5px] font-bold truncate ${isDone ? 'text-emerald-300' : isCurrent ? 'text-cyan-300' : 'text-gray-400'}`}>
+                                        {step.title}
+                                      </span>
+                                      {step.badge && (
+                                        <span
+                                          className={`text-[8px] font-mono px-1.5 py-0.2 rounded shrink-0 ${
+                                            isDone
+                                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-semibold'
+                                              : isCurrent
+                                              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 animate-pulse font-semibold'
+                                              : 'bg-white/5 text-gray-500'
+                                          }`}
+                                        >
+                                          {step.badge}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-[8.5px] text-gray-400 mt-0.5 leading-tight">
+                                      {step.detail}
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 3D Smart Signal Live Detour Status Card */}
+                      <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between text-[9px]">
+                        <div className="flex items-center gap-2">
+                          <span className="relative flex h-3 w-3 shrink-0">
+                            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                              trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' ? 'bg-emerald-400' : 'bg-gray-400'
+                            }`} />
+                            <span className={`relative inline-flex rounded-full h-3 w-3 ${
+                              trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' ? 'bg-emerald-500' : 'bg-gray-600'
+                            }`} />
+                          </span>
+                          <div>
+                            <div className="font-bold text-white flex items-center gap-1">
+                              <span>Overhead Smart Signal</span>
+                              <span className="text-emerald-400">(Street 28187112)</span>
+                            </div>
+                            <div className="text-gray-300 text-[8px]">
+                              {trafficSimState !== 'NORMAL'
+                                ? `Overhead LCD: CONGESTION AHEAD • Green Arrow: ${trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' ? 'Blinking' : 'Standby'}`
+                                : 'Overhead LCD: Off (Standby) • Green Signal: Free Flow'}
+                            </div>
+                          </div>
+                        </div>
+                        <span className="font-mono text-emerald-300 text-[8.5px] font-bold">
+                          {trafficSimState !== 'NORMAL' ? 'BYPASS ⮤' : 'OPEN'}
                         </span>
                       </div>
                     </div>
-
-                    {trafficSimState === 'ALTERNATIVE_ROUTE_ACTIVE' && (
-                      <div className="mt-2.5 p-2 bg-blue-500/10 border border-blue-500/30 rounded text-[9px] text-blue-300 leading-relaxed">
-                        <span className="font-bold text-white">✦ Dual AI Bypass Active:</span>
-                        <div className="mt-1 space-y-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />
-                            <span><strong className="text-cyan-300">Primary Bypass:</strong> Left turn before breakdown via North Corridor</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
-                            <span><strong className="text-orange-300">Early Diversion:</strong> Upstream orange route active to prevent junction choke</span>
-                          </div>
-                          <div className="text-[8px] text-gray-400 pt-0.5 border-t border-white/5">
-                            Strict bottleneck control: 0 vehicles pass breakdown area until recovery
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
 

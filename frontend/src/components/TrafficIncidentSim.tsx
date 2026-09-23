@@ -4,6 +4,98 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { RoadGraph } from '../utils/pathfinding';
 import { AlertTriangle, X, ShieldAlert, Sparkles, Navigation } from 'lucide-react';
+import { TrafficSignalPost } from './TrafficSignalPost';
+
+export interface IncidentActionStep {
+  id: string;
+  title: string;
+  detail: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  time?: string;
+  badge?: string;
+}
+
+export const getInitialActionSteps = (type: string, timeStr: string): IncidentActionStep[] => {
+  if (type === 'Vehicle Accident') {
+    return [
+      {
+        id: 'cctv_capture',
+        title: 'Street CCTV Capture & Evidence',
+        detail: 'CAM-JP04 live feed triggered optical impact detection',
+        status: 'in_progress',
+        time: timeStr,
+        badge: 'CAM-JP04 [CAPTURING]',
+      },
+      {
+        id: 'ai_assessment',
+        title: 'AI Scene & Severity Analysis',
+        detail: 'CV model: 2-vehicle collision, Lane 1 obstructed, 0 casualties',
+        status: 'pending',
+        badge: 'ANALYZING',
+      },
+      {
+        id: 'authority_dispatch',
+        title: 'Traffic Police Authorities & EMS Alert',
+        detail: 'Transmitting telemetry & FIR packet to JP Nagar Traffic Police (PCR #07)',
+        status: 'pending',
+        badge: 'PENDING',
+      },
+      {
+        id: 'signal_detour',
+        title: 'Smart Signal & Dynamic Detour',
+        detail: 'Overhead signal blinking green arrow engages left detour corridor',
+        status: 'pending',
+        badge: 'STANDBY',
+      },
+      {
+        id: 'scene_clearance',
+        title: 'Clearance & Emergency Tow Wrecker',
+        detail: 'Heavy recovery wrecker unit en route to clear damaged vehicles',
+        status: 'pending',
+        badge: 'STANDBY',
+      },
+    ];
+  } else {
+    return [
+      {
+        id: 'cctv_capture',
+        title: 'Street CCTV Stall Detection',
+        detail: 'CAM-JP04 optical flow flagged zero-velocity vehicle in active lane',
+        status: 'in_progress',
+        time: timeStr,
+        badge: 'CAM-JP04 [FLAGGED]',
+      },
+      {
+        id: 'ai_assessment',
+        title: 'Traffic Flow Impact & Bottleneck Prediction',
+        detail: 'Simulation engine predicts 88% queue buildup within 25 seconds',
+        status: 'pending',
+        badge: 'ANALYZING',
+      },
+      {
+        id: 'authority_dispatch',
+        title: 'Municipal Towing Facility Dispatch',
+        detail: 'Automated work order issued to South Ring Heavy Tow Unit #12',
+        status: 'pending',
+        badge: 'PENDING',
+      },
+      {
+        id: 'signal_detour',
+        title: 'Smart Signal & Dynamic Detour',
+        detail: 'Overhead signal blinking green arrow engages left detour corridor',
+        status: 'pending',
+        badge: 'STANDBY',
+      },
+      {
+        id: 'scene_clearance',
+        title: 'Vehicle Towing & Road Reopening',
+        detail: 'Tow truck hooked to stalled car; clearing lane obstruction',
+        status: 'pending',
+        badge: 'STANDBY',
+      },
+    ];
+  }
+};
 
 // ── Timing (seconds) ─────────────────────────────────────────────────────────
 const T_BUILDUP_START   = 4;
@@ -268,23 +360,28 @@ export const TrafficIncidentSim: React.FC<TrafficIncidentSimProps> = ({ roads })
 
   // ── Event Listeners (Start / Pause / Stop) ──────────────────────────────────
   useEffect(() => {
-    const handleStart = () => {
+    const handleStart = (e?: any) => {
       if (simStateRef.current !== 'NORMAL' || !incidentRoad) return;
 
       const rawName = incidentRoad.name || `Road (${incidentRoad.type || 'trunk'})`;
       const roadName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+      const incType = e?.detail?.incidentType || 'Vehicle Accident';
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
       setIncident({
-        type: 'Vehicle Breakdown',
+        type: incType,
         roadName: `${roadName} (JP Nagar)`,
         position: incidentPosData.pos,
         severity: 'High',
         lanesAffected: 'Left Lane Blocked',
         congestionLevel: 15,
         averageSpeed: 45,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        status: 'Left Lane Blocked / Queue Building',
+        timestamp: timeStr,
+        status: incType === 'Vehicle Accident' ? 'Collision Reported / Processing' : 'Left Lane Blocked / Queue Building',
         startTime: Date.now(),
+        actionSteps: getInitialActionSteps(incType, timeStr),
+        cctvCameraId: 'CAM-JP04',
+        cctvLocation: 'Outer Ring Rd / 24th Main Jn',
       });
       setSimState('INCIDENT_OCCURRED');
       setShowPopup(false);
@@ -305,11 +402,11 @@ export const TrafficIncidentSim: React.FC<TrafficIncidentSimProps> = ({ roads })
       resetSim();
     };
 
-    window.addEventListener('laip-start-incident', handleStart);
+    window.addEventListener('laip-start-incident', handleStart as EventListener);
     window.addEventListener('laip-pause-incident', handlePause as EventListener);
     window.addEventListener('laip-stop-incident',  handleStop);
     return () => {
-      window.removeEventListener('laip-start-incident', handleStart);
+      window.removeEventListener('laip-start-incident', handleStart as EventListener);
       window.removeEventListener('laip-pause-incident', handlePause as EventListener);
       window.removeEventListener('laip-stop-incident',  handleStop);
     };
@@ -353,6 +450,48 @@ export const TrafficIncidentSim: React.FC<TrafficIncidentSimProps> = ({ roads })
         setSimState('RECOVERY');
         setIncident((p: any) => p ? { ...p, status: 'Vehicle Towing in Progress...' } : null);
       }
+
+      // Update Action Steps dynamically based on elapsed time and stage
+      setIncident((prev: any) => {
+        if (!prev || !prev.actionSteps) return prev;
+        const steps = prev.actionSteps.map((step: IncidentActionStep) => ({ ...step }));
+
+        // Step 0: CCTV capture completes at t >= 2
+        if (t >= 2 && steps[0].status !== 'completed') {
+          steps[0].status = 'completed';
+          steps[0].badge = prev.type === 'Vehicle Accident' ? 'CAM-JP04 [PHOTO CAPTURED]' : 'CAM-JP04 [STALL FLAGGED]';
+          if (steps[1].status === 'pending') steps[1].status = 'in_progress';
+        }
+
+        // Step 1: AI analysis completes at t >= 5
+        if (t >= 5 && steps[1].status !== 'completed') {
+          steps[1].status = 'completed';
+          steps[1].badge = prev.type === 'Vehicle Accident' ? 'AI VERIFIED (HIGH SEVERITY)' : 'BOTTLENECK DETECTED';
+          if (steps[2].status === 'pending') steps[2].status = 'in_progress';
+        }
+
+        // Step 2: Authority dispatch completes at t >= 9
+        if (t >= 9 && steps[2].status !== 'completed') {
+          steps[2].status = 'completed';
+          steps[2].badge = prev.type === 'Vehicle Accident' ? 'POLICE ACKNOWLEDGED (PCR #07)' : 'TOW UNIT #12 DISPATCHED';
+          if (steps[3].status === 'pending') steps[3].status = 'in_progress';
+        }
+
+        // Step 3: Signal detour activates when ALTERNATIVE_ROUTE_ACTIVE
+        if (st === 'ALTERNATIVE_ROUTE_ACTIVE' && steps[3].status !== 'completed') {
+          steps[3].status = 'completed';
+          steps[3].badge = 'SIGNAL BLINKING GREEN';
+          if (steps[4].status === 'pending') steps[4].status = 'in_progress';
+        }
+
+        // Step 4: Recovery clearance
+        if (st === 'RECOVERY' && steps[4].status !== 'in_progress') {
+          steps[4].status = 'in_progress';
+          steps[4].badge = 'CLEARANCE UNDERWAY';
+        }
+
+        return { ...prev, actionSteps: steps };
+      });
 
       if (st === 'RECOVERY') {
         const prog  = Math.min(1, (t - T_RECOVERY_START) / T_RECOVERY_DUR);
@@ -568,35 +707,102 @@ export const TrafficIncidentSim: React.FC<TrafficIncidentSimProps> = ({ roads })
   });
 
   return (
-    <group>
-      {/* 1 ── Stalled Vehicle at Breakdown Site (u = 0.565, AFTER left turn) */}
+    <group frustumCulled={false}>
+      {/* ── 3D Overhead Smart Traffic Signal Post with Horizontal VMS LCD & Detour Signal Head ── */}
+      <TrafficSignalPost
+        position={[-25.8, 0, -154.5]}
+        rotation={[0, -Math.PI / 2, 0]}
+        isRerouting={simState === 'ALTERNATIVE_ROUTE_ACTIVE'}
+        isSimActive={simState !== 'NORMAL'}
+        incident={incident}
+        simState={simState}
+      />
+
+      {/* 1 ── Incident Site (Vehicle Accident or Breakdown) at u = 0.565, AFTER left turn */}
       {incident && incidentPosData.pos && (
-        <group position={[incidentPosData.pos.x, 0.45, incidentPosData.pos.z]}>
-          {/* Stalled car body */}
-          <mesh renderOrder={10}>
-            <boxGeometry args={[3.2, 1.4, 5.2]} />
-            <meshStandardMaterial color="#dc2626" roughness={0.3} metalness={0.5} />
-          </mesh>
-          {/* Car roof */}
-          <mesh position={[0, 1.0, -0.3]} renderOrder={10}>
-            <boxGeometry args={[2.6, 0.9, 2.8]} />
-            <meshStandardMaterial color="#1e293b" roughness={0.2} />
-          </mesh>
-          {/* Hazard Lights */}
-          <mesh position={[-1.3, 0.4, 2.5]}>
-            <sphereGeometry args={[0.3, 8, 8]} />
-            <meshBasicMaterial color="#f97316" />
-          </mesh>
-          <mesh position={[1.3, 0.4, 2.5]}>
-            <sphereGeometry args={[0.3, 8, 8]} />
-            <meshBasicMaterial color="#f97316" />
-          </mesh>
+        <group position={[incidentPosData.pos.x, 0.45, incidentPosData.pos.z]} frustumCulled={false}>
+          {incident.type === 'Vehicle Accident' ? (
+            /* Collision Scene: 2 Vehicles Impacted */
+            <group frustumCulled={false}>
+              {/* Primary vehicle: Red sedan angled 12 deg */}
+              <group rotation={[0, 0.2, 0]} frustumCulled={false}>
+                <mesh renderOrder={10} frustumCulled={false}>
+                  <boxGeometry args={[3.2, 1.4, 5.2]} />
+                  <meshStandardMaterial color="#dc2626" roughness={0.3} metalness={0.5} />
+                </mesh>
+                <mesh position={[0, 1.0, -0.3]} renderOrder={10} frustumCulled={false}>
+                  <boxGeometry args={[2.6, 0.9, 2.8]} />
+                  <meshStandardMaterial color="#1e293b" roughness={0.2} />
+                </mesh>
+                {/* Flashing Hazards */}
+                <mesh position={[-1.3, 0.4, 2.5]} frustumCulled={false}>
+                  <sphereGeometry args={[0.3, 8, 8]} />
+                  <meshBasicMaterial color="#f97316" />
+                </mesh>
+                <mesh position={[1.3, 0.4, 2.5]} frustumCulled={false}>
+                  <sphereGeometry args={[0.3, 8, 8]} />
+                  <meshBasicMaterial color="#f97316" />
+                </mesh>
+              </group>
+
+              {/* Second vehicle: Dark slate sedan wedged at 28 deg angle */}
+              <group position={[1.8, 0, -1.2]} rotation={[0, -0.48, 0]} frustumCulled={false}>
+                <mesh renderOrder={10} frustumCulled={false}>
+                  <boxGeometry args={[3.0, 1.35, 5.0]} />
+                  <meshStandardMaterial color="#334155" roughness={0.4} metalness={0.6} />
+                </mesh>
+                <mesh position={[0, 0.95, -0.2]} renderOrder={10} frustumCulled={false}>
+                  <boxGeometry args={[2.5, 0.85, 2.6]} />
+                  <meshStandardMaterial color="#0f172a" roughness={0.2} />
+                </mesh>
+                {/* Headlight flash */}
+                <mesh position={[-1.2, 0.35, 2.4]} frustumCulled={false}>
+                  <sphereGeometry args={[0.25, 8, 8]} />
+                  <meshBasicMaterial color="#f87171" />
+                </mesh>
+              </group>
+
+              {/* Safety Traffic Cones around accident scene */}
+              {[[-2.5, 0.35, 3.5], [3.2, 0.35, 2.8], [-2.0, 0.35, -3.2], [3.5, 0.35, -2.8]].map(([cx, cy, cz], idx) => (
+                <mesh key={`cone-${idx}`} position={[cx, cy, cz]} frustumCulled={false}>
+                  <coneGeometry args={[0.28, 0.7, 8]} />
+                  <meshStandardMaterial color="#ea580c" roughness={0.3} emissive="#ea580c" emissiveIntensity={0.6} />
+                </mesh>
+              ))}
+            </group>
+          ) : (
+            /* Vehicle Breakdown Scene: Single Stalled Car with Hazards & Warning Triangle */
+            <group frustumCulled={false}>
+              <mesh renderOrder={10} frustumCulled={false}>
+                <boxGeometry args={[3.2, 1.4, 5.2]} />
+                <meshStandardMaterial color="#dc2626" roughness={0.3} metalness={0.5} />
+              </mesh>
+              <mesh position={[0, 1.0, -0.3]} renderOrder={10} frustumCulled={false}>
+                <boxGeometry args={[2.6, 0.9, 2.8]} />
+                <meshStandardMaterial color="#1e293b" roughness={0.2} />
+              </mesh>
+              {/* Hazard Lights */}
+              <mesh position={[-1.3, 0.4, 2.5]} frustumCulled={false}>
+                <sphereGeometry args={[0.3, 8, 8]} />
+                <meshBasicMaterial color="#f97316" />
+              </mesh>
+              <mesh position={[1.3, 0.4, 2.5]} frustumCulled={false}>
+                <sphereGeometry args={[0.3, 8, 8]} />
+                <meshBasicMaterial color="#f97316" />
+              </mesh>
+              {/* Warning Triangle behind breakdown */}
+              <mesh position={[0, 0.3, 4.2]} rotation={[0, 0, Math.PI]} frustumCulled={false}>
+                <coneGeometry args={[0.45, 0.6, 3]} />
+                <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={1.2} />
+              </mesh>
+            </group>
+          )}
         </group>
       )}
 
       {/* 2 ── Sleek Enterprise Congestion Ribbon (Extends back from breakdown past left turn) */}
       {simState !== 'NORMAL' && congestionCurveGeo && (
-        <mesh renderOrder={5}>
+        <mesh renderOrder={5} frustumCulled={false}>
           <primitive object={congestionCurveGeo} attach="geometry" />
           <meshStandardMaterial
             color={congestionColor}
@@ -611,7 +817,7 @@ export const TrafficIncidentSim: React.FC<TrafficIncidentSimProps> = ({ roads })
 
       {/* 3 ── PRIMARY Bypass Route (High-visibility Cyan Ribbon at Left Turn u = 0.519) */}
       {(simState === 'ALTERNATIVE_ROUTE_ACTIVE' || simState === 'RECOVERY') && primaryBypassGeo && (
-        <mesh renderOrder={6}>
+        <mesh renderOrder={6} frustumCulled={false}>
           <primitive object={primaryBypassGeo} attach="geometry" />
           <meshStandardMaterial
             color="#0284c7"
@@ -626,7 +832,7 @@ export const TrafficIncidentSim: React.FC<TrafficIncidentSimProps> = ({ roads })
 
       {/* 4 ── EARLY OVERFLOW Bypass Route (Vibrant Orange Ribbon at Orange Road u = 0.164) */}
       {(simState === 'ALTERNATIVE_ROUTE_ACTIVE' || simState === 'RECOVERY') && orangeBypassGeo && (
-        <mesh renderOrder={6}>
+        <mesh renderOrder={6} frustumCulled={false}>
           <primitive object={orangeBypassGeo} attach="geometry" />
           <meshStandardMaterial
             color="#ea580c"
@@ -639,8 +845,8 @@ export const TrafficIncidentSim: React.FC<TrafficIncidentSimProps> = ({ roads })
         </mesh>
       )}
 
-      {/* 5 ── Instanced Vehicles (Tires resting on asphalt y = 0.45) */}
-      <instancedMesh ref={meshRef} args={[undefined, undefined, NUM_CARS]} renderOrder={10}>
+      {/* 5 ── Instanced Vehicles (Tires resting on asphalt y = 0.45) - Frustum culling DISABLED for zoom visibility */}
+      <instancedMesh ref={meshRef} args={[undefined, undefined, NUM_CARS]} renderOrder={10} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial roughness={0.3} metalness={0.6} />
       </instancedMesh>
